@@ -132,6 +132,10 @@ def load_snapshot(db_path: str, account_id: str = "") -> Dict:
                 }
         for lead in leads:
             lead["evidence"] = [evidence_map[item] for item in lead.pop("evidence_ids") if item in evidence_map]
+        from .send_store import latest_send_statuses
+        send_statuses = latest_send_statuses(db_path, account_id, run["run_id"])
+        for lead in leads:
+            lead["send_status"] = send_statuses.get(lead["customer_id"], lead["send_status"])
 
         bands = Counter(item["intent_band"] for item in leads)
         recent_cutoff = int(run["published_at"] or run["started_at"]) - 30 * 86400

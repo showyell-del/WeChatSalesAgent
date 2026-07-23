@@ -91,3 +91,10 @@
 - An `NSTextView` used as an `NSScrollView.documentView` needs a non-zero initial frame, vertical resizing, and `textContainer.widthTracksTextView=YES`; a zero-frame text view rendered blank even though its string was populated.
 - `scripts/phase4_export.sh` uses the bundled spreadsheet runtime and `@oai/artifact-tool` to publish a real filterable XLSX. Resolve the output path before changing into the temporary module directory or a relative export will be deleted with that directory.
 - `scripts/phase4_validate.sh` verifies the native UI, visual PNG render, strict snapshot behavior, spreadsheet formulas, formula-error scan, visual sheet renders, XLSX archive, and end-to-end export wrapper.
+
+## Phase 6 verified send lifecycle path
+
+- `agent_core.send_store.SendStore` owns local send batches and recipients in `send_batches` and `send_recipients`; workspace `send_status` must be projected from this audited local state rather than hard-coded.
+- Creating a batch is not a send. `scripts/phase6_send.sh create --account-id <id> --text <message>` selects only actionable leads (`高意向`, `待激活`) unless explicit customer IDs/bands are supplied, stores the final per-recipient text, and marks recipients `已排队`.
+- `scripts/phase6_send.sh dispatch --batch-id <id>` currently fails closed with `NATIVE_SEND_ADAPTER_NOT_CERTIFIED`; it records the batch as `发送阻断` and never reports success until native text/image/video/file delivery has real `Buf2Resp`/receiver verification.
+- `scripts/phase6_validate.sh` verifies send batch creation, blocked dispatch, and workspace send-status projection.
