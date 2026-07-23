@@ -97,4 +97,5 @@
 - `agent_core.send_store.SendStore` owns local send batches and recipients in `send_batches` and `send_recipients`; workspace `send_status` must be projected from this audited local state rather than hard-coded.
 - Creating a batch is not a send. `scripts/phase6_send.sh create --account-id <id> --text <message>` selects only actionable leads (`高意向`, `待激活`) unless explicit customer IDs/bands are supplied, stores the final per-recipient text, and marks recipients `已排队`.
 - `scripts/phase6_send.sh dispatch --batch-id <id>` currently fails closed with `NATIVE_SEND_ADAPTER_NOT_CERTIFIED`; it records the batch as `发送阻断` and never reports success until native text/image/video/file delivery has real `Buf2Resp`/receiver verification.
+- The native AppKit workspace has send controls in the top toolbar: choose attachments, create a send batch, and execute dispatch. The UI only includes currently visible actionable leads (`高意向`, `待激活`) when creating a batch; it must not send to `长期培育` or `排除` customers from an all-filter view.
 - `scripts/phase6_validate.sh` verifies send batch creation, blocked dispatch, and workspace send-status projection.

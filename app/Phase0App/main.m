@@ -53,6 +53,9 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
 @property NSTextView *detailText;
 @property NSTextView *draftText;
 @property NSTextField *statusLabel;
+@property NSTextField *batchStatusLabel;
+@property NSMutableArray<NSString *> *attachmentPaths;
+@property NSString *currentBatchID;
 @property NSString *snapshotPath;
 @property NSString *startupError;
 @end
@@ -102,6 +105,7 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     }
     self.allLeads = self.snapshot[@"leads"] ?: @[];
     self.visibleLeads = self.allLeads;
+    self.attachmentPaths = [NSMutableArray array];
     [self buildWindow];
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
@@ -161,13 +165,24 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     NSButton *exportButton = [NSButton buttonWithTitle:@"导出 Excel" target:self action:@selector(exportWorkbook:)];
     exportButton.bezelStyle = NSBezelStyleTexturedRounded;
     exportButton.contentTintColor = NSColor.systemBlueColor;
-    [content addSubview:title]; [content addSubview:subtitle]; [content addSubview:self.statusLabel]; [content addSubview:exportButton];
-    for (NSView *view in @[title, subtitle, self.statusLabel, exportButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
+    NSButton *attachButton = [NSButton buttonWithTitle:@"选择附件" target:self action:@selector(chooseAttachments:)];
+    attachButton.bezelStyle = NSBezelStyleTexturedRounded;
+    NSButton *batchButton = [NSButton buttonWithTitle:@"创建发送批次" target:self action:@selector(createSendBatch:)];
+    batchButton.bezelStyle = NSBezelStyleTexturedRounded;
+    batchButton.contentTintColor = NSColor.systemOrangeColor;
+    NSButton *dispatchButton = [NSButton buttonWithTitle:@"执行发送" target:self action:@selector(dispatchSendBatch:)];
+    dispatchButton.bezelStyle = NSBezelStyleTexturedRounded;
+    dispatchButton.contentTintColor = NSColor.systemRedColor;
+    [content addSubview:title]; [content addSubview:subtitle]; [content addSubview:self.statusLabel]; [content addSubview:exportButton]; [content addSubview:attachButton]; [content addSubview:batchButton]; [content addSubview:dispatchButton];
+    for (NSView *view in @[title, subtitle, self.statusLabel, exportButton, attachButton, batchButton, dispatchButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
         [title.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:28], [title.topAnchor constraintEqualToAnchor:content.topAnchor constant:24],
         [subtitle.leadingAnchor constraintEqualToAnchor:title.leadingAnchor], [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:4],
         [exportButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-28], [exportButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
-        [self.statusLabel.trailingAnchor constraintEqualToAnchor:exportButton.leadingAnchor constant:-18], [self.statusLabel.centerYAnchor constraintEqualToAnchor:title.centerYAnchor]
+        [dispatchButton.trailingAnchor constraintEqualToAnchor:exportButton.leadingAnchor constant:-8], [dispatchButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [batchButton.trailingAnchor constraintEqualToAnchor:dispatchButton.leadingAnchor constant:-8], [batchButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [attachButton.trailingAnchor constraintEqualToAnchor:batchButton.leadingAnchor constant:-8], [attachButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [self.statusLabel.trailingAnchor constraintEqualToAnchor:attachButton.leadingAnchor constant:-18], [self.statusLabel.centerYAnchor constraintEqualToAnchor:title.centerYAnchor]
     ]];
 
     NSDictionary *metrics = self.snapshot[@"metrics"];
@@ -215,7 +230,8 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     self.draftText = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 360, 150)]; self.draftText.verticallyResizable = YES; self.draftText.autoresizingMask = NSViewWidthSizable; self.draftText.textContainer.widthTracksTextView = YES; self.draftText.font = [NSFont systemFontOfSize:12]; self.draftText.textColor = [NSColor colorWithWhite:0.18 alpha:1]; self.draftText.drawsBackground = YES; self.draftText.backgroundColor = NSColor.whiteColor; self.draftText.textContainerInset = NSMakeSize(8, 8); self.draftText.wantsLayer = YES; self.draftText.layer.cornerRadius = 6;
     NSScrollView *draftScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; draftScroll.documentView = self.draftText; draftScroll.hasVerticalScroller = YES; draftScroll.drawsBackground = YES; draftScroll.backgroundColor = NSColor.whiteColor;
     NSTextField *draftLabel = Label(@"可编辑激活文案", 12, [NSColor colorWithWhite:0.35 alpha:1], YES);
-    for (NSView *view in @[self.detailTitle, self.detailMeta, detailScroll, draftLabel, draftScroll]) { [detail addSubview:view]; view.translatesAutoresizingMaskIntoConstraints = NO; }
+    self.batchStatusLabel = Label(@"未创建发送批次", 11, [NSColor colorWithWhite:0.45 alpha:1], NO);
+    for (NSView *view in @[self.detailTitle, self.detailMeta, detailScroll, draftLabel, draftScroll, self.batchStatusLabel]) { [detail addSubview:view]; view.translatesAutoresizingMaskIntoConstraints = NO; }
     [workspace addSubview:detail]; detail.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
         [tableScroll.leadingAnchor constraintEqualToAnchor:workspace.leadingAnchor constant:12], [tableScroll.topAnchor constraintEqualToAnchor:self.search.bottomAnchor constant:12],
@@ -226,7 +242,9 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
         [self.detailMeta.leadingAnchor constraintEqualToAnchor:self.detailTitle.leadingAnchor], [self.detailMeta.trailingAnchor constraintEqualToAnchor:self.detailTitle.trailingAnchor], [self.detailMeta.topAnchor constraintEqualToAnchor:self.detailTitle.bottomAnchor constant:5],
         [detailScroll.leadingAnchor constraintEqualToAnchor:self.detailTitle.leadingAnchor], [detailScroll.trailingAnchor constraintEqualToAnchor:self.detailTitle.trailingAnchor], [detailScroll.topAnchor constraintEqualToAnchor:self.detailMeta.bottomAnchor constant:8], [detailScroll.heightAnchor constraintEqualToConstant:210],
         [draftLabel.leadingAnchor constraintEqualToAnchor:self.detailTitle.leadingAnchor], [draftLabel.topAnchor constraintEqualToAnchor:detailScroll.bottomAnchor constant:10],
-        [draftScroll.leadingAnchor constraintEqualToAnchor:self.detailTitle.leadingAnchor], [draftScroll.trailingAnchor constraintEqualToAnchor:self.detailTitle.trailingAnchor], [draftScroll.topAnchor constraintEqualToAnchor:draftLabel.bottomAnchor constant:6], [draftScroll.bottomAnchor constraintEqualToAnchor:detail.bottomAnchor constant:-14]
+        [draftScroll.leadingAnchor constraintEqualToAnchor:self.detailTitle.leadingAnchor], [draftScroll.trailingAnchor constraintEqualToAnchor:self.detailTitle.trailingAnchor], [draftScroll.topAnchor constraintEqualToAnchor:draftLabel.bottomAnchor constant:6],
+        [self.batchStatusLabel.leadingAnchor constraintEqualToAnchor:self.detailTitle.leadingAnchor], [self.batchStatusLabel.trailingAnchor constraintEqualToAnchor:self.detailTitle.trailingAnchor], [self.batchStatusLabel.bottomAnchor constraintEqualToAnchor:detail.bottomAnchor constant:-12],
+        [draftScroll.bottomAnchor constraintEqualToAnchor:self.batchStatusLabel.topAnchor constant:-8]
     ]];
     if (self.startupError.length) { self.detailTitle.stringValue = @"分析尚未就绪"; self.detailText.string = self.startupError; }
     else if (self.visibleLeads.count) { [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO]; [self showLead:self.visibleLeads[0]]; }
@@ -276,6 +294,107 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     self.visibleLeads = [self.allLeads filteredArrayUsingPredicate:predicate];
     [self.table reloadData];
     if (self.visibleLeads.count) { [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO]; [self showLead:self.visibleLeads[0]]; }
+}
+
+- (NSString *)currentDBPath {
+    NSString *db = NSProcessInfo.processInfo.environment[@"WECHAT_SALES_AGENT_DB"];
+    if (!db.length) db = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/WeChatSalesAgent/agent_state.sqlite3"];
+    return db;
+}
+
+- (NSArray<NSString *> *)runAgentCommand:(NSArray<NSString *> *)arguments terminationStatus:(int *)status error:(NSError **)error {
+    NSString *pythonRoot = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Python"];
+    NSTask *task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/python3"];
+    task.arguments = arguments;
+    NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+    environment[@"PYTHONPATH"] = pythonRoot;
+    task.environment = environment;
+    NSPipe *pipe = [NSPipe pipe];
+    task.standardOutput = pipe;
+    task.standardError = pipe;
+    if (![task launchAndReturnError:error]) return @[];
+    [task waitUntilExit];
+    if (status) *status = task.terminationStatus;
+    NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+    NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSString *line in [output componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) if (line.length) [lines addObject:line];
+    return lines;
+}
+
+- (NSDictionary *)lastJSONObjectFromLines:(NSArray<NSString *> *)lines {
+    for (NSString *line in lines.reverseObjectEnumerator) {
+        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+        id object = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        if ([object isKindOfClass:NSDictionary.class] && object[@"batch_id"]) return object;
+    }
+    return nil;
+}
+
+- (void)chooseAttachments:(id)sender {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles = YES;
+    panel.canChooseDirectories = NO;
+    panel.allowsMultipleSelection = YES;
+    if ([panel runModal] != NSModalResponseOK) return;
+    [self.attachmentPaths removeAllObjects];
+    for (NSURL *url in panel.URLs) if (url.path.length) [self.attachmentPaths addObject:url.path];
+    self.batchStatusLabel.stringValue = self.attachmentPaths.count ? [NSString stringWithFormat:@"已选择 %lu 个附件", (unsigned long)self.attachmentPaths.count] : @"未选择附件";
+}
+
+- (NSArray<NSString *> *)actionableVisibleCustomerIDs {
+    NSMutableArray<NSString *> *ids = [NSMutableArray array];
+    for (NSDictionary *lead in self.visibleLeads) {
+        NSString *band = lead[@"intent_band"];
+        if (![band isEqualToString:@"高意向"] && ![band isEqualToString:@"待激活"]) continue;
+        NSString *customerID = lead[@"customer_id"];
+        if (customerID.length) [ids addObject:customerID];
+    }
+    return ids;
+}
+
+- (BOOL)createSendBatchInternal {
+    NSArray<NSString *> *customerIDs = self.actionableVisibleCustomerIDs;
+    if (!customerIDs.count) { NSBeep(); self.batchStatusLabel.stringValue = @"当前筛选没有高意向/待激活客户"; return NO; }
+    NSString *text = [self.draftText.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!text.length) { NSBeep(); self.batchStatusLabel.stringValue = @"激活文案不能为空"; return NO; }
+    NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithArray:@[@"-m", @"agent_core.send_cli", @"--db", self.currentDBPath, @"create", @"--account-id", self.snapshot[@"account_id"] ?: @"", @"--text", text]];
+    for (NSString *customerID in customerIDs) [arguments addObjectsFromArray:@[@"--customer-id", customerID]];
+    for (NSString *path in self.attachmentPaths) [arguments addObjectsFromArray:@[@"--attachment", path]];
+    int status = 0;
+    NSError *error = nil;
+    NSArray<NSString *> *lines = [self runAgentCommand:arguments terminationStatus:&status error:&error];
+    NSDictionary *batch = [self lastJSONObjectFromLines:lines];
+    if (status != 0 || !batch) {
+        self.batchStatusLabel.stringValue = error.localizedDescription ?: @"发送批次创建失败";
+        self.batchStatusLabel.textColor = NSColor.systemRedColor;
+        return NO;
+    }
+    self.currentBatchID = batch[@"batch_id"];
+    self.batchStatusLabel.stringValue = [NSString stringWithFormat:@"批次 %@ 已创建 · %@ 人", [self.currentBatchID substringToIndex:MIN((NSUInteger)8, self.currentBatchID.length)], batch[@"total"] ?: @0];
+    self.batchStatusLabel.textColor = NSColor.systemOrangeColor;
+    return YES;
+}
+
+- (void)createSendBatch:(id)sender {
+    [self createSendBatchInternal];
+}
+
+- (void)dispatchSendBatch:(id)sender {
+    if (!self.currentBatchID.length && ![self createSendBatchInternal]) return;
+    int status = 0;
+    NSError *error = nil;
+    NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.send_cli", @"--db", self.currentDBPath, @"dispatch", @"--batch-id", self.currentBatchID] terminationStatus:&status error:&error];
+    NSDictionary *batch = [self lastJSONObjectFromLines:lines];
+    if (!batch) {
+        self.batchStatusLabel.stringValue = error.localizedDescription ?: @"发送执行失败";
+        self.batchStatusLabel.textColor = NSColor.systemRedColor;
+        return;
+    }
+    NSString *label = batch[@"status_label"] ?: batch[@"status"] ?: @"未知";
+    self.batchStatusLabel.stringValue = [NSString stringWithFormat:@"发送状态：%@ · %@ 人", label, batch[@"total"] ?: @0];
+    self.batchStatusLabel.textColor = status == 0 ? NSColor.systemGreenColor : NSColor.systemRedColor;
 }
 
 - (void)exportWorkbook:(id)sender {
