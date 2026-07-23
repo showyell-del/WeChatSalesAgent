@@ -63,6 +63,10 @@ The actual file-send command will be added only after the discovered profile pas
 7. Replacing Frida heap allocations with native `calloc`/`mmap` fixed the bad `MMStartTask` argument observation: `starttask_seen` then reported the expected task id and writable payload memory.
 8. Even with native persistent allocations and correct default manager dispatch, both `uploadappattach` and direct `sendappmsg` file tasks reached `MMStartTask(return=1)` but never reached `Req2Buf`, serializer hook, or `Buf2Resp`.
 9. The simple iPad-style file path from `wechat_chatter` is therefore invalidated for this local WeChat 4.1.11.55 build. The next file/video Spike must reuse Chatlog's validated media-upload task shell (`StartC2CUpload`/CDN callback lifecycle) instead of continuing to patch `uploadappattach`.
+10. Text-send lifecycle investigation moved beyond the simple file path: cloning a real 0x1a0 `MMStartTask` payload and rebasing its internal pointers lets a synthetic `newsendmsg` task enter `Req2Buf`; `AutoBufferWrite` must be called at `0x3e7ff0c`, not `0x3e7ff18`.
+11. Runtime instruction-window probes verified that 4.1.11.55 creates a valid 0x30 tree node itself when a task id is absent: allocation starts at `0x3e594a8`, and `node+0x28` is read at `0x3e597b0`. Replacing the root slot at `x19/x24+0x60` with a synthetic node is the wrong lifecycle and can crash in `__tree_remove`.
+12. The current `file_send_agent.js` therefore patches only the real WeChat node's `node+0x28` message pointer at `0x3e597b0`, keeps WeChat responsible for remove/delete/rebalance, and skips fake-message post-callback cleanup explicitly at `preCallback=0x3e5ac58`.
+13. Latest live verification is blocked by login state, not profile discovery: the visible WeChat process is sitting at login/QR/transfer-only UI, so no real `StartTask` manager context is emitted. Re-run `CHATLOG_SPIKE_TEXT=1 python3 file_send_spike.py` only after the business account is inside the normal chat workspace.
 
 ## Results
 

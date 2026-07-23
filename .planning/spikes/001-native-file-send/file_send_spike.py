@@ -245,8 +245,12 @@ def build_payload(task_id: int, message_type: str) -> bytes:
     data[:len(seed)] = seed
     data[0] = 0x6E
     data[16] = 0x10
+    data[0] = 0x0A if message_type == "text" else 0x6E
+    data[1] = 0x02 if message_type == "text" else data[1]
+    data[16] = 0x01 if message_type == "text" else 0x10
     data[28] = 0x25 if message_type == "appattach" else 0x20
-    data[92] = 0x6E
+    data[92] = 0x0A if message_type == "text" else 0x6E
+    data[93] = 0x02 if message_type == "text" else data[93]
     payload = bytearray(0x1A0)
     payload[:4] = task_id.to_bytes(4, "little")
     payload[4:] = data
@@ -332,6 +336,36 @@ def main() -> int:
         if not status.get("dispatch_ready"):
             raise RuntimeError(f"native dispatch unavailable: {status}")
         record("lifecycle", "dispatch_ready", status=status)
+
+        if os.getenv("CHATLOG_SPIKE_TEXT") == "1":
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and not script.exports_sync.status().get("context_ready"):
+                time.sleep(0.2)
+            if not script.exports_sync.status().get("context_ready"):
+                raise RuntimeError("real StartTask manager context was not observed; ensure WeChat is logged into the normal chat workspace")
+            task = state.next_task()
+            marker = f"native-text-cert-{int(time.time())}"
+            body = b"".join([
+                field_bytes(1, field_bytes(1, RECEIVER)),
+                field_bytes(2, marker),
+                field_varint(3, 1),
+                field_varint(4, int(time.time())),
+                field_varint(5, random.randrange(1 << 34, 1 << 35)),
+                field_bytes(6, "<msgsource><alnode><fr>1</fr></alnode></msgsource>"),
+            ])
+            text_proto = field_varint(1, 1) + field_bytes(2, body)
+            event_start = len(events)
+            triggered = script.exports_sync.trigger(task, "text", text_proto.hex(), build_payload(task, "text").hex())
+            if not triggered.get("ok"):
+                raise RuntimeError(f"text trigger failed: {triggered}")
+            response_event = wait_event(condition, events, event_start,
+                                        lambda item: item.get("event") == "buf2resp" and item.get("task_id") == task, 20)
+            ret = parse_base_response(bytes.fromhex(str(response_event["data_hex"])))
+            if ret != 0:
+                raise RuntimeError(f"newsendmsg returned ret={ret}")
+            record("result", "native_text_protocol_ack", task_id=task, receiver=RECEIVER, marker=marker, ret=ret)
+            time.sleep(5)
+            return 0
 
         if os.getenv("CHATLOG_SPIKE_DIRECT_FILE") == "1":
             task = state.next_task()
