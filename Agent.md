@@ -23,3 +23,11 @@
 - Native sender objects that WeChat may hold asynchronously must be allocated from native memory (`calloc`/`mmap`), not ordinary Frida heap. Frida heap objects allowed `MMStartTask` to return but produced bad `x1` state and dirty unload behavior.
 - The `wechat_chatter` simple file path (`uploadappattach` chunks then `sendappmsg` appmsg type 6) is not a valid 4.1.11.55 first implementation path in this environment: both `uploadappattach` and direct `sendappmsg` file tasks reached `MMStartTask` with the correct task id but never reached `Req2Buf` or `Buf2Resp`.
 - After a native send attempt times out, `script.unload()` and `session.detach()` can also time out; the clean recovery path is controlled WeChat restart plus targeted cleanup of only the current Frida helper. Do not leave a hot-unload-only lifecycle for file/video send experiments.
+
+## Phase 0 local delivery facts
+
+- Verified local toolchain on 2026-07-23: Swift 6.0.3 targets `arm64-apple-macosx15.0`; `python3` is 3.9.6; `python3` imports Frida 16.7.19.
+- `codesign`, `notarytool`, and `stapler` are available through Command Line Tools, but `security find-identity -v -p codesigning` reports `0 valid identities found`; Developer ID signing/notarization must fail closed until a valid identity and credentials are installed.
+- `go` is not currently available on PATH and was not found at `/opt/homebrew/bin/go` or `/usr/local/go/bin/go`; Phase 0 plans must not require a Go build step.
+- Latest process probe did not show a running WeChat main process; Phase 0 profile checks must report `WECHAT_NOT_RUNNING` distinctly from profile mismatch and worker failures.
+- Source reference snapshots are still available at `/tmp/chatlog-alpha-spike.WWc9fK/repo` commit `2f54920d4aa78e1812819f77bb59a5e380c6f0ec` and `/tmp/wechat-chatter-spike` commit `49114827bc83f8381eb638e8a56f3f0305fc1a1c`.
