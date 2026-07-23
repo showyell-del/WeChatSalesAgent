@@ -40,6 +40,12 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     return card;
 }
 
+@class WorkspaceController;
+
+@interface AttachmentDropField : NSTextField
+@property(nonatomic, weak) WorkspaceController *workspaceController;
+@end
+
 @interface WorkspaceController : NSObject <NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate>
 @property NSDictionary *snapshot;
 @property NSArray<NSDictionary *> *allLeads;
@@ -58,6 +64,38 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
 @property NSString *currentBatchID;
 @property NSString *snapshotPath;
 @property NSString *startupError;
+- (void)setAttachmentURLs:(NSArray<NSURL *> *)urls;
+@end
+
+@implementation AttachmentDropField
+- (instancetype)initWithFrame:(NSRect)frameRect {
+    self = [super initWithFrame:frameRect];
+    if (self) {
+        [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+        self.editable = NO;
+        self.selectable = NO;
+        self.bordered = NO;
+        self.drawsBackground = YES;
+        self.backgroundColor = [NSColor colorWithRed:1.0 green:0.98 blue:0.90 alpha:1];
+        self.textColor = [NSColor colorWithWhite:0.35 alpha:1];
+        self.font = [NSFont systemFontOfSize:11];
+        self.alignment = NSTextAlignmentCenter;
+        self.wantsLayer = YES;
+        self.layer.cornerRadius = 6;
+        self.layer.borderWidth = 1;
+        self.layer.borderColor = NSColor.systemOrangeColor.CGColor;
+    }
+    return self;
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    return NSDragOperationCopy;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    NSArray<NSURL *> *urls = [sender.draggingPasteboard readObjectsForClasses:@[NSURL.class] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    if (!urls.count) return NO;
+    [self.workspaceController setAttachmentURLs:urls];
+    return YES;
+}
 @end
 
 @implementation WorkspaceController
@@ -230,7 +268,10 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     self.draftText = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 360, 150)]; self.draftText.verticallyResizable = YES; self.draftText.autoresizingMask = NSViewWidthSizable; self.draftText.textContainer.widthTracksTextView = YES; self.draftText.font = [NSFont systemFontOfSize:12]; self.draftText.textColor = [NSColor colorWithWhite:0.18 alpha:1]; self.draftText.drawsBackground = YES; self.draftText.backgroundColor = NSColor.whiteColor; self.draftText.textContainerInset = NSMakeSize(8, 8); self.draftText.wantsLayer = YES; self.draftText.layer.cornerRadius = 6;
     NSScrollView *draftScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; draftScroll.documentView = self.draftText; draftScroll.hasVerticalScroller = YES; draftScroll.drawsBackground = YES; draftScroll.backgroundColor = NSColor.whiteColor;
     NSTextField *draftLabel = Label(@"可编辑激活文案", 12, [NSColor colorWithWhite:0.35 alpha:1], YES);
-    self.batchStatusLabel = Label(@"未创建发送批次", 11, [NSColor colorWithWhite:0.45 alpha:1], NO);
+    AttachmentDropField *dropField = [[AttachmentDropField alloc] initWithFrame:NSZeroRect];
+    dropField.workspaceController = self;
+    dropField.stringValue = @"拖入图片/视频/文件，或点上方选择附件";
+    self.batchStatusLabel = dropField;
     for (NSView *view in @[self.detailTitle, self.detailMeta, detailScroll, draftLabel, draftScroll, self.batchStatusLabel]) { [detail addSubview:view]; view.translatesAutoresizingMaskIntoConstraints = NO; }
     [workspace addSubview:detail]; detail.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
@@ -338,9 +379,14 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     panel.canChooseDirectories = NO;
     panel.allowsMultipleSelection = YES;
     if ([panel runModal] != NSModalResponseOK) return;
+    [self setAttachmentURLs:panel.URLs];
+}
+
+- (void)setAttachmentURLs:(NSArray<NSURL *> *)urls {
     [self.attachmentPaths removeAllObjects];
-    for (NSURL *url in panel.URLs) if (url.path.length) [self.attachmentPaths addObject:url.path];
-    self.batchStatusLabel.stringValue = self.attachmentPaths.count ? [NSString stringWithFormat:@"已选择 %lu 个附件", (unsigned long)self.attachmentPaths.count] : @"未选择附件";
+    for (NSURL *url in urls) if (url.path.length) [self.attachmentPaths addObject:url.path];
+    self.batchStatusLabel.stringValue = self.attachmentPaths.count ? [NSString stringWithFormat:@"已选择 %lu 个附件 · 可继续创建发送批次", (unsigned long)self.attachmentPaths.count] : @"拖入图片/视频/文件，或点上方选择附件";
+    self.batchStatusLabel.textColor = [NSColor colorWithWhite:0.30 alpha:1];
 }
 
 - (NSArray<NSString *> *)actionableVisibleCustomerIDs {
