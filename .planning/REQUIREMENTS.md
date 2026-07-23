@@ -94,11 +94,11 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REQ-DATA-001 | Phase 1 | Pending |
-| REQ-DATA-002 | Phase 1 | Pending |
-| REQ-DATA-003 | Phase 1 | Pending |
-| REQ-DATA-004 | Phase 1 | Pending |
-| REQ-DATA-005 | Phase 1 | Pending |
+| REQ-DATA-001 | Phase 1 | Complete |
+| REQ-DATA-002 | Phase 1 | Complete |
+| REQ-DATA-003 | Phase 1 | Complete |
+| REQ-DATA-004 | Phase 1 | Complete |
+| REQ-DATA-005 | Phase 1 | Complete |
 | REQ-LEAD-001 | Phase 2 | Pending |
 | REQ-LEAD-002 | Phase 2 | Pending |
 | REQ-LEAD-003 | Phase 2 | Pending |

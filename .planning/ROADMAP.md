@@ -13,7 +13,7 @@ This roadmap delivers one narrow commercial workflow: prove the signed native We
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 0: Commercial Delivery and Exact Profile Gate** - Local automated gates passed; Developer ID notarization, clean-Mac install, and live WeChat text-send smoke still need human/external verification.
-- [ ] **Phase 1: Account, Key, and Consistent Sync Foundation** - Users can bind one verified WeChat account and produce fresh account-scoped decrypted data generations.
+- [x] **Phase 1: Account, Key, and Consistent Sync Foundation** - One verified account now produces fresh account-scoped decrypted data generations with Keychain verification and atomic publish.
 - [ ] **Phase 2: Deterministic Private-Chat Corpus and Evidence Index** - Users can create an auditable private-chat candidate corpus with deterministic extracted facts and immutable evidence IDs.
 - [ ] **Phase 3: DeepSeek Structured Analysis and Cost Ledger** - Users can generate validated intention scores, evidence-backed judgments, costs, and compliant personalized drafts.
 - [ ] **Phase 4: Native Desktop Lead Workspace and Excel Export** - Users can review, filter, inspect, and export lead snapshots in a professional macOS desktop workspace.
@@ -45,7 +45,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. User can complete first decrypt and later incremental sync into a staged generation that publishes atomically only after all required databases pass.
   4. User can switch among verified historical accounts, while each analysis run is bound to exactly one selected account.
   5. A failed read, decrypt, WAL, or sync step keeps the previous generation marked old and never presents it as the latest result.
-**Plans**: TBD
+**Plans**: 1/1 complete
 **UI hint**: yes
 
 ### Phase 2: Deterministic Private-Chat Corpus and Evidence Index
@@ -131,7 +131,7 @@ Phases execute in numeric order: 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 0. Commercial Delivery and Exact Profile Gate | 4/4 local | Human needed | - |
-| 1. Account, Key, and Consistent Sync Foundation | 0/TBD | Not started | - |
+| 1. Account, Key, and Consistent Sync Foundation | 1/1 | Complete | 2026-07-23 |
 | 2. Deterministic Private-Chat Corpus and Evidence Index | 0/TBD | Not started | - |
 | 3. DeepSeek Structured Analysis and Cost Ledger | 0/TBD | Not started | - |
 | 4. Native Desktop Lead Workspace and Excel Export | 0/TBD | Not started | - |

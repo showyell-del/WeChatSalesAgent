@@ -44,3 +44,12 @@
 - `scripts/phase0_validate.sh --quick` passes the AppKit build/sign and no-fallback scan.
 - `scripts/phase0_validate.sh --full` passes local automated gates and may include explicit blocked gates for missing Developer ID identity, WeChat not running, and manual `filehelper` text-send smoke.
 - `DEVELOPER_ID_IDENTITY_MISSING`, `WECHAT_NOT_RUNNING`, and `TEXT_SEND_SMOKE_MANUAL_REQUIRED` are not fallback success states; they are terminal gates that must be resolved before claiming commercial Phase 0 completion.
+
+## Phase 1 verified account and sync path
+
+- `scripts/phase1_sync.sh accounts` reads Chatlog's running and historical accounts through the JSON Lines action interface without exposing the database key.
+- `scripts/phase1_sync.sh switch --account-id wxid_3prysbeqgvci22_9f8d` verified historical-account selection for the current business account.
+- `scripts/phase1_sync.sh connect --account-id wxid_3prysbeqgvci22_9f8d` verifies a 64-hex database key, stores and reads it back from macOS Keychain service `com.wechat-sales-agent.database-key`, runs first/incremental decrypt, and validates 11 primary session/contact/message databases as readable SQLite files.
+- Chatlog's `security add-generic-password -w` prompt form does not read a secret from piped stdin in this non-interactive runtime; it created an empty item and was removed. The verified CLI form passes the value explicitly. Replace that transport with Security.framework when the native desktop target owns Keychain access.
+- `scripts/phase1_sync.sh sync --account-id wxid_3prysbeqgvci22_9f8d --limit 5000` verified an account-bound staged generation containing 1,202 sessions. Publishing a later generation atomically marks the prior published generation `old`; a failed staging generation leaves the prior published generation unchanged.
+- `scripts/phase1_validate.sh` runs unit tests, Python compilation, Chatlog health, account discovery, account switch, key/decrypted-database verification, live decrypt/sync, and state readback. Runtime state is written only to ignored `runtime/agent_state.sqlite3`.
