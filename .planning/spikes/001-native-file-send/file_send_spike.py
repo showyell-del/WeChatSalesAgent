@@ -32,6 +32,12 @@ RECEIVER = "filehelper"
 CHUNK_SIZE = 50_000
 
 
+class SpikeError(RuntimeError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -68,8 +74,10 @@ def find_pid() -> int:
     command = str(APP / "Contents/MacOS/WeChat")
     output = subprocess.check_output(["ps", "-axo", "pid=,command="], text=True)
     pids = [int(line.strip().split(maxsplit=1)[0]) for line in output.splitlines() if line.strip().endswith(command)]
+    if not pids:
+        raise SpikeError("WECHAT_NOT_RUNNING", "WeChat main process is not running")
     if len(pids) != 1:
-        raise RuntimeError(f"expected one WeChat process, got {pids}")
+        raise SpikeError("WECHAT_PROCESS_AMBIGUOUS", f"expected one WeChat process, got {pids}")
     return pids[0]
 
 
@@ -290,16 +298,43 @@ def call_with_timeout(name: str, func, timeout: float = 3.0) -> None:
         raise result["error"]  # type: ignore[misc]
 
 
+def wait_for_real_starttask_context(script, timeout: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            status = script.exports_sync.status()
+        except frida.InvalidOperationError as exc:
+            raise SpikeError("WECHAT_PROCESS_EXITED", "WeChat exited before a real StartTask manager context was observed") from exc
+        if status.get("context_ready"):
+            return
+        time.sleep(0.2)
+    try:
+        status = script.exports_sync.status()
+    except frida.InvalidOperationError as exc:
+        raise SpikeError("WECHAT_PROCESS_EXITED", "WeChat exited before a real StartTask manager context was observed") from exc
+    raise SpikeError(
+        "WECHAT_NOT_LOGGED_IN",
+        f"real StartTask manager context was not observed; ensure WeChat is logged into the normal chat workspace: {status}",
+    )
+
+
 def main() -> int:
     EVENTS.unlink(missing_ok=True)
     RESULT.unlink(missing_ok=True)
-    full_hash, arm_hash = exact_profile_gate()
-    marker = f"native-file-spike-{int(time.time())}"
-    test_file = ROOT / f"{marker}.txt"
-    content = (marker + "\n" + "WeChat native file-send verification\n").encode("utf-8")
-    test_file.write_bytes(content)
-    source_sha = sha256(test_file)
-    pid = find_pid()
+    try:
+        full_hash, arm_hash = exact_profile_gate()
+        marker = f"native-file-spike-{int(time.time())}"
+        test_file = ROOT / f"{marker}.txt"
+        content = (marker + "\n" + "WeChat native file-send verification\n").encode("utf-8")
+        test_file.write_bytes(content)
+        source_sha = sha256(test_file)
+        pid = find_pid()
+    except SpikeError as exc:
+        record("result", "failed", code=exc.code, error=str(exc))
+        return 1
+    except Exception as exc:
+        record("result", "failed", error=repr(exc))
+        return 1
     record("lifecycle", "start", pid=pid, frida=frida.__version__, full_hash=full_hash, arm64_hash=arm_hash,
            test_file=str(test_file), source_sha256=source_sha, source_bytes=len(content))
 
@@ -336,13 +371,9 @@ def main() -> int:
         if not status.get("dispatch_ready"):
             raise RuntimeError(f"native dispatch unavailable: {status}")
         record("lifecycle", "dispatch_ready", status=status)
+        wait_for_real_starttask_context(script)
 
         if os.getenv("CHATLOG_SPIKE_TEXT") == "1":
-            deadline = time.monotonic() + 20
-            while time.monotonic() < deadline and not script.exports_sync.status().get("context_ready"):
-                time.sleep(0.2)
-            if not script.exports_sync.status().get("context_ready"):
-                raise RuntimeError("real StartTask manager context was not observed; ensure WeChat is logged into the normal chat workspace")
             task = state.next_task()
             marker = f"native-text-cert-{int(time.time())}"
             body = b"".join([
@@ -427,6 +458,9 @@ def main() -> int:
         record("result", "native_protocol_ack", **result)
         time.sleep(5)
         return 0
+    except SpikeError as exc:
+        record("result", "failed", code=exc.code, error=str(exc))
+        return 1
     except Exception as exc:
         record("result", "failed", error=repr(exc))
         return 1
