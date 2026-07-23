@@ -102,21 +102,21 @@
 | REQ-LEAD-001 | Phase 2 | Complete |
 | REQ-LEAD-002 | Phase 2 | Complete |
 | REQ-LEAD-003 | Phase 2 | Complete |
-| REQ-LEAD-004 | Phase 3 | Pending |
-| REQ-LEAD-005 | Phase 3 | Pending |
-| REQ-LEAD-006 | Phase 3 | Pending |
-| REQ-LEAD-007 | Phase 3 | Pending |
-| REQ-LEAD-008 | Phase 3 | Pending |
+| REQ-LEAD-004 | Phase 3 | Implemented; live provider verification pending |
+| REQ-LEAD-005 | Phase 3 | Implemented; live provider verification pending |
+| REQ-LEAD-006 | Phase 3 | Implemented; live provider verification pending |
+| REQ-LEAD-007 | Phase 3 | Implemented; live provider verification pending |
+| REQ-LEAD-008 | Phase 3 | Implemented; live provider verification pending |
 | REQ-UI-001 | Phase 4 | Pending |
 | REQ-UI-002 | Phase 4 | Pending |
 | REQ-UI-003 | Phase 4 | Pending |
 | REQ-UI-004 | Phase 4 | Pending |
 | REQ-UI-005 | Phase 4 | Pending |
-| REQ-AI-001 | Phase 3 | Pending |
-| REQ-AI-002 | Phase 3 | Pending |
-| REQ-AI-003 | Phase 3 | Pending |
-| REQ-AI-004 | Phase 3 | Pending |
-| REQ-AI-005 | Phase 3 | Pending |
+| REQ-AI-001 | Phase 3 | Implemented; API Key gate pending |
+| REQ-AI-002 | Phase 3 | Implemented; transfer approval pending |
+| REQ-AI-003 | Phase 3 | Implemented; live provider verification pending |
+| REQ-AI-004 | Phase 3 | Implemented; live provider verification pending |
+| REQ-AI-005 | Phase 3 | Implemented; live provider verification pending |
 | REQ-SEND-001 | Phase 6 | Pending |
 | REQ-SEND-002 | Phase 6 | Pending |
 | REQ-SEND-003 | Phase 5 | Pending |

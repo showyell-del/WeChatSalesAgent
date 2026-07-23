@@ -70,7 +70,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Each accepted result contains strict JSON, a 0-100 "成交意向分", one of four bands, recent contact time, evidence IDs, obstacles, suggested action, and a personalized draft only for final candidates.
   4. Empty output, malformed JSON, missing fields, evidence mismatch, forbidden claims, invented prices/offers/promises, and draft needs not expressed by the customer fail the analysis with no parser repair.
   5. User can see real input/output/cache token counts, estimated cost, actual cost, cumulative cost, and the stable prompt/schema/model version for each run.
-**Plans**: TBD
+**Plans**: 1/1 local implementation complete; verification status `human_needed` until a real configured DeepSeek call passes
 **UI hint**: yes
 
 ### Phase 4: Native Desktop Lead Workspace and Excel Export
@@ -133,7 +133,7 @@ Phases execute in numeric order: 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 0. Commercial Delivery and Exact Profile Gate | 4/4 local | Human needed | - |
 | 1. Account, Key, and Consistent Sync Foundation | 1/1 | Complete | 2026-07-23 |
 | 2. Deterministic Private-Chat Corpus and Evidence Index | 1/1 | Complete | 2026-07-23 |
-| 3. DeepSeek Structured Analysis and Cost Ledger | 0/TBD | Not started | - |
+| 3. DeepSeek Structured Analysis and Cost Ledger | 1/1 local | Human needed | - |
 | 4. Native Desktop Lead Workspace and Excel Export | 0/TBD | Not started | - |
 | 5. Native Adapter Spikes and Certification Registry | 0/TBD | Not started | - |
 | 6. Immutable Send Plan and Single-Owner Batch Lifecycle | 0/TBD | Not started | - |

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2 full private-chat corpus verified; Phase 3 DeepSeek structured analysis is next.
-last_updated: "2026-07-23T13:55:00Z"
-last_activity: 2026-07-23 — Published and integrity-checked a full 183-day corpus with 244 eligible conversations, 47,479 evidence references, and 739 deterministic facts.
+stopped_at: Phase 3 local DeepSeek pipeline verified; Phase 4 native desktop workspace is next while the real API call remains human-gated.
+last_updated: "2026-07-23T15:30:00Z"
+last_activity: 2026-07-23 — Implemented strict one-call DeepSeek analysis, privacy gates, evidence validation, and exact token/cost ledger; local verification passed and the real API key is not configured.
 progress:
   total_phases: 8
   completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
+  total_plans: 7
+  completed_plans: 7
   percent: 25
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-23)
 
 **Core value:** 从真实微信私聊中准确找到值得再激活的客户，给出可审计的业务证据，并安全完成触达闭环。
-**Current focus:** Phase 3: DeepSeek Structured Analysis and Cost Ledger
+**Current focus:** Phase 4: Native Desktop Lead Workspace and Excel Export
 
 ## Current Position
 
-Phase: 3 of 7 (DeepSeek Structured Analysis and Cost Ledger)
+Phase: 4 of 7 (Native Desktop Lead Workspace and Excel Export)
 Plan: 0/TBD
-Status: Ready to implement
-Last activity: 2026-07-23 — Phase 2 full corpus and integrity audit passed; Phase 0 external commercial gates remain tracked.
+Status: Ready to implement; Phase 3 real provider verification remains human-gated
+Last activity: 2026-07-23 — Phase 3 local DeepSeek implementation and validation passed; Phase 0 external commercial gates remain tracked.
 
 Progress: [███░░░░░░░] 25%
 
@@ -36,7 +36,7 @@ Progress: [███░░░░░░░] 25%
 
 **Velocity:**
 
-- Total plans completed: 6
+- Total plans completed: 7
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -47,6 +47,7 @@ Progress: [███░░░░░░░] 25%
 | 0 | 4 | 4 | N/A |
 | 1 | 1 | 1 | N/A |
 | 2 | 1 | 1 | N/A |
+| 3 | 1 local | 1 local | N/A |
 
 **Recent Trend:**
 
@@ -82,6 +83,7 @@ None yet.
 - [Phase 0]: No valid Developer ID Application identity is installed, so notarization/clean-Mac commercial install is not complete.
 - [Phase 0]: WeChat is not running, so live attach/profile match and receiver-visible `filehelper` text-send Ack are not complete.
 - [Phase 5]: Native video and arbitrary-file send lifecycles are unresolved until dedicated certification passes.
+- [Phase 3]: A real DeepSeek API Key and explicit external-data-transfer approval are required before live provider verification can complete.
 
 ## Deferred Items
 
@@ -94,7 +96,7 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-07-23
-Stopped at: Phase 2 complete; implement Phase 3 DeepSeek analysis and cost ledger while keeping Phase 0 external gates open.
+Stopped at: Phase 3 local implementation complete; implement Phase 4 native desktop workspace while keeping Phase 0 and live DeepSeek gates open.
 Resume file: None
 
 **Planned Phase:** 00 (commercial-delivery-and-exact-profile-gate) — 4 plans — 2026-07-23T12:41:44.756Z
@@ -104,3 +106,5 @@ Resume file: None
 **Executed Phase:** 01 account/key/sync foundation — 1/1 plan — passed — 2026-07-23
 
 **Executed Phase:** 02 deterministic private-chat corpus — 1/1 plan — passed — 2026-07-23
+
+**Executed Phase:** 03 DeepSeek structured analysis and cost ledger — 1/1 local plan — human_needed — 2026-07-23

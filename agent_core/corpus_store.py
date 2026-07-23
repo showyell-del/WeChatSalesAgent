@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS corpus_evidence (
 );
 
 CREATE INDEX IF NOT EXISTS evidence_by_conversation ON evidence(corpus_id, username, timestamp);
+CREATE INDEX IF NOT EXISTS evidence_by_username ON evidence(username, timestamp);
 CREATE INDEX IF NOT EXISTS facts_by_conversation ON extracted_facts(corpus_id, username, field);
 """
 

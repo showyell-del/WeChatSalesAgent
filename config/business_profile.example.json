@@ -1,0 +1,34 @@
+{
+  "business_name": "示例街舞门店",
+  "products": [
+    "少儿街舞体验课",
+    "成人街舞体验课",
+    "常规街舞课程"
+  ],
+  "prices": [],
+  "offers": [],
+  "address": "",
+  "business_hours": "",
+  "allowed_claims": [],
+  "forbidden_claims": [
+    "保证学会",
+    "保证成交",
+    "全网最低价"
+  ],
+  "lead_keywords": [
+    "街舞",
+    "舞蹈",
+    "体验",
+    "试听",
+    "课程",
+    "课表",
+    "报名",
+    "价格",
+    "多少钱",
+    "地址",
+    "上课",
+    "时间"
+  ],
+  "minor_data_approved": false,
+  "external_api_data_transfer_approved": false
+}

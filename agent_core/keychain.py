@@ -7,11 +7,14 @@ SERVICE = "com.wechat-sales-agent.database-key"
 
 
 class KeychainStore:
+    def __init__(self, service: str = SERVICE):
+        self.service = service
+
     def put(self, account_id: str, secret: str) -> None:
         command = [
             "/usr/bin/security", "add-generic-password",
             "-a", account_id,
-            "-s", SERVICE,
+            "-s", self.service,
             "-U",
             "-w", secret,
         ]
@@ -23,7 +26,7 @@ class KeychainStore:
         command = [
             "/usr/bin/security", "find-generic-password",
             "-a", account_id,
-            "-s", SERVICE,
+            "-s", self.service,
             "-w",
         ]
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
