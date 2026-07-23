@@ -15,16 +15,16 @@ Per-phase validation contract for the commercial delivery and exact profile gate
 
 | Property | Value |
 |----------|-------|
-| **Framework** | Swift Package tests, shell verification scripts, Python worker smoke commands |
-| **Config file** | `Package.swift`, `scripts/phase0_validate.sh` |
-| **Quick run command** | `swift test && scripts/phase0_validate.sh --quick` |
-| **Full suite command** | `swift test && scripts/phase0_validate.sh --full` |
+| **Framework** | Objective-C/AppKit clang build, shell verification scripts, Python worker smoke commands |
+| **Config file** | `app/Phase0App/Info.plist`, `scripts/phase0_validate.sh` |
+| **Quick run command** | `scripts/phase0_validate.sh --quick` |
+| **Full suite command** | `scripts/phase0_validate.sh --full` |
 | **Estimated runtime** | ~60 seconds without live WeChat smoke; manual smoke depends on WeChat login and filehelper delivery |
 
 ## Sampling Rate
 
-- **After every task commit:** Run `swift test && scripts/phase0_validate.sh --quick`
-- **After every plan wave:** Run `swift test && scripts/phase0_validate.sh --full`
+- **After every task commit:** Run `scripts/phase0_validate.sh --quick`
+- **After every plan wave:** Run `scripts/phase0_validate.sh --full`
 - **Before verification:** Full suite must pass, except Developer ID and live WeChat smoke may report explicit blocked/manual states.
 - **Max feedback latency:** 90 seconds for automated checks.
 
@@ -32,7 +32,7 @@ Per-phase validation contract for the commercial delivery and exact profile gate
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 00-01-01 | 01 | 1 | Platform boundary | T-00-01 | Native app skeleton builds without Web UI | build/unit | `swift test` | W0 | pending |
+| 00-01-01 | 01 | 1 | Platform boundary | T-00-01 | Native app skeleton builds without Web UI | build/script | `scripts/build_phase0_app.sh` | W0 | pending |
 | 00-01-02 | 01 | 1 | Exact profile gate | T-00-02 | Mismatch and no-process states fail closed before key/send | unit/script | `scripts/phase0_validate.sh --quick` | W0 | pending |
 | 00-02-01 | 02 | 1 | Commercial feasibility gate | T-00-03 | Missing Developer ID is terminal, not treated as pass | script | `scripts/phase0_validate.sh --package` | W0 | pending |
 | 00-03-01 | 03 | 2 | Worker lifecycle | T-00-04 | Worker emits explicit JSON states and detaches cleanly | python/script | `scripts/phase0_validate.sh --worker` | W0 | pending |
@@ -42,10 +42,11 @@ Per-phase validation contract for the commercial delivery and exact profile gate
 
 ## Wave 0 Requirements
 
-- [ ] `Package.swift` - Swift package test target exists.
+- [ ] `app/Phase0App/main.m` - AppKit entry point exists.
+- [ ] `app/Phase0App/Info.plist` - macOS app bundle metadata exists.
 - [ ] `scripts/phase0_validate.sh` - deterministic validator exists and supports `--quick`, `--full`, `--package`, `--worker`, `--chatlog`, `--send-smoke-manifest`, and `--no-fallback-scan`.
 - [ ] `native-worker/phase0_worker.py` - worker command entrypoint exists.
-- [ ] `Tests/AgentCoreTests/` - unit tests cover profile gate, diagnostics, and package gate states.
+- [ ] `native-worker/phase0_worker.py` and validator commands cover profile gate, diagnostics, and package gate states.
 
 ## Manual-Only Verifications
 

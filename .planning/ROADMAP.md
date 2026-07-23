@@ -12,7 +12,7 @@ This roadmap delivers one narrow commercial workflow: prove the signed native We
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 0: Commercial Delivery and Exact Profile Gate** - Prove the signed package, exact WeChat profile gate, Frida lifecycle, key/read, and minimal native send smoke path on the target profile.
+- [ ] **Phase 0: Commercial Delivery and Exact Profile Gate** - Local automated gates passed; Developer ID notarization, clean-Mac install, and live WeChat text-send smoke still need human/external verification.
 - [ ] **Phase 1: Account, Key, and Consistent Sync Foundation** - Users can bind one verified WeChat account and produce fresh account-scoped decrypted data generations.
 - [ ] **Phase 2: Deterministic Private-Chat Corpus and Evidence Index** - Users can create an auditable private-chat candidate corpus with deterministic extracted facts and immutable evidence IDs.
 - [ ] **Phase 3: DeepSeek Structured Analysis and Cost Ledger** - Users can generate validated intention scores, evidence-backed judgments, costs, and compliant personalized drafts.
@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. The bundled Python/Frida worker can attach to WeChat, load a script, detach, unload, and leave no residual helper for the verified profile.
   4. The packaged artifact proves minimal key acquisition, private-chat read, and a receiver-visible minimal text send with typed Ack and cleanup.
   5. Unsupported platform, SIP/security, profile, Frida, key, read, send, and cleanup failures are shown as explicit fail-closed diagnostics with no fallback path.
-**Plans**: TBD
+**Plans**: 4/4 local plans executed; verification status `human_needed`
 
 ### Phase 1: Account, Key, and Consistent Sync Foundation
 **Goal**: Users can select one verified WeChat business account and maintain fresh, account-bound decrypted chat generations without stale substitution.
@@ -130,7 +130,7 @@ Phases execute in numeric order: 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 0. Commercial Delivery and Exact Profile Gate | 0/TBD | Not started | - |
+| 0. Commercial Delivery and Exact Profile Gate | 4/4 local | Human needed | - |
 | 1. Account, Key, and Consistent Sync Foundation | 0/TBD | Not started | - |
 | 2. Deterministic Private-Chat Corpus and Evidence Index | 0/TBD | Not started | - |
 | 3. DeepSeek Structured Analysis and Cost Ledger | 0/TBD | Not started | - |

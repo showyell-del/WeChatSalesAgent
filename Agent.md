@@ -26,8 +26,21 @@
 
 ## Phase 0 local delivery facts
 
-- Verified local toolchain on 2026-07-23: Swift 6.0.3 targets `arm64-apple-macosx15.0`; `python3` is 3.9.6; `python3` imports Frida 16.7.19.
+- Verified local toolchain on 2026-07-23: `/usr/bin/clang` can compile an Objective-C/AppKit native app; `python3` is 3.9.6; `python3` imports Frida 16.7.19.
+- Swift is not currently usable for Phase 0 on this machine: SwiftPM manifest linking fails against PackageDescription, and direct `swiftc` fails because the compiler patch version does not match the installed macOS SDK Swift interfaces. Do not use `swift test` or `swift build` until the Command Line Tools/Xcode toolchain is repaired.
 - `codesign`, `notarytool`, and `stapler` are available through Command Line Tools, but `security find-identity -v -p codesigning` reports `0 valid identities found`; Developer ID signing/notarization must fail closed until a valid identity and credentials are installed.
 - `go` is not currently available on PATH and was not found at `/opt/homebrew/bin/go` or `/usr/local/go/bin/go`; Phase 0 plans must not require a Go build step.
 - Latest process probe did not show a running WeChat main process; Phase 0 profile checks must report `WECHAT_NOT_RUNNING` distinctly from profile mismatch and worker failures.
+- Verified WeChat disk dylib location on 2026-07-23: `/Applications/WeChat.app/Contents/Resources/wechat.dylib`; full SHA-256 and arm64 slice SHA-256 match the certified values above.
 - Source reference snapshots are still available at `/tmp/chatlog-alpha-spike.WWc9fK/repo` commit `2f54920d4aa78e1812819f77bb59a5e380c6f0ec` and `/tmp/wechat-chatter-spike` commit `49114827bc83f8381eb638e8a56f3f0305fc1a1c`.
+
+## Phase 0 verified commands
+
+- `scripts/build_phase0_app.sh` builds `dist/phase0/WeChatSalesAgent.app`, ad-hoc signs it, and reports `DEVELOPER_ID_IDENTITY_MISSING` when no Developer ID identity is installed.
+- `dist/phase0/WeChatSalesAgent.app/Contents/MacOS/WeChatSalesAgent --smoke` emits `PHASE0_APP_LAUNCHED`.
+- `python3 native-worker/phase0_worker.py version` reports Frida `16.7.19`.
+- `python3 native-worker/phase0_worker.py profile-gate` reports `WECHAT_NOT_RUNNING` when WeChat is not running; with WeChat running it must validate build `269111`, full dylib SHA-256, and arm64 slice SHA-256 before native operations.
+- `scripts/phase0_chatlog_smoke.sh --help-smoke` reports `CHATLOG_HELP_CALLABLE`.
+- `scripts/phase0_validate.sh --quick` passes the AppKit build/sign and no-fallback scan.
+- `scripts/phase0_validate.sh --full` passes local automated gates and may include explicit blocked gates for missing Developer ID identity, WeChat not running, and manual `filehelper` text-send smoke.
+- `DEVELOPER_ID_IDENTITY_MISSING`, `WECHAT_NOT_RUNNING`, and `TEXT_SEND_SMOKE_MANUAL_REQUIRED` are not fallback success states; they are terminal gates that must be resolved before claiming commercial Phase 0 completion.

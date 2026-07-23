@@ -6,18 +6,19 @@
 
 ## Executive Summary
 
-Phase 0 should prove a narrow native macOS delivery path before the product invests further in analysis UI or batch sending. The current local toolchain supports a Swift 6 arm64 app skeleton and a Python 3.9.6 + Frida 16.7.19 worker. `codesign`, `notarytool`, and `stapler` are available through Command Line Tools, but `security find-identity -v -p codesigning` reports `0 valid identities found`, so Developer ID signing/notarization cannot be completed on this machine until the developer certificate is installed.
+Phase 0 should prove a narrow native macOS delivery path before the product invests further in analysis UI or batch sending. The current local toolchain supports an Objective-C/AppKit arm64 app skeleton through `/usr/bin/clang` and a Python 3.9.6 + Frida 16.7.19 worker. Swift is not usable on this machine right now because the Command Line Tools Swift compiler and installed macOS SDK Swift interfaces have a patch-version mismatch. `codesign`, `notarytool`, and `stapler` are available through Command Line Tools, but `security find-identity -v -p codesigning` reports `0 valid identities found`, so Developer ID signing/notarization cannot be completed on this machine until the developer certificate is installed.
 
 The phase should therefore produce two classes of evidence:
 
-1. **Local executable gate evidence** that can be verified now: Swift app/helper builds, exact WeChat version/hash probe, worker attach/load/unload/detach lifecycle, helper cleanup checks, Chatlog key/read smoke command wiring, and minimal text-send smoke harness structure.
+1. **Local executable gate evidence** that can be verified now: AppKit `.app` builds, exact WeChat version/hash probe, worker attach/load/unload/detach lifecycle, helper cleanup checks, Chatlog key/read smoke command wiring, and minimal text-send smoke harness structure.
 2. **Commercial package gate evidence** that is explicit and fail-closed: ad-hoc/local signed artifact can be built now; Developer ID signing, notary submission, stapling, and clean-Mac install are terminal checks that must report missing identity when unavailable rather than pretending to pass.
 
 Phase 0 should not introduce the final lead-analysis data model, DeepSeek flow, dashboard, Excel export, video/file adapters, or batch sender. It should create the product skeleton and hard gates those later phases will reuse.
 
 ## Local Facts Verified This Turn
 
-- `swift --version` returns Apple Swift `6.0.3`, target `arm64-apple-macosx15.0`.
+- `/usr/bin/clang` can compile an Objective-C/AppKit native app.
+- `swift --version` returns Apple Swift `6.0.3`, target `arm64-apple-macosx15.0`, but SwiftPM/direct `swiftc` cannot currently build this project because the local compiler patch version does not match the installed SDK Swift interfaces.
 - `python3 --version` returns `Python 3.9.6`.
 - `python3` imports `frida` version `16.7.19`.
 - `xcrun --find codesign` resolves to `/usr/bin/codesign`.
@@ -34,12 +35,12 @@ Phase 0 should not introduce the final lead-analysis data model, DeepSeek flow, 
 
 ### Project Skeleton
 
-Use a Swift Package/Application skeleton for Phase 0. Because Go is not installed locally, Phase 0 should not depend on a Go build step. The product can still adopt a Go core in a later phase if the toolchain is installed, but the first feasibility gate should use verified tools only.
+Use an Objective-C/AppKit `.app` skeleton for Phase 0. Because Go is not installed locally and Swift is not currently buildable with this Command Line Tools install, Phase 0 should not depend on Go or Swift build steps. The product can still adopt SwiftUI/Go in later phases after the toolchain is repaired or installed, but the first feasibility gate should use verified tools only.
 
 Recommended Phase 0 structure:
 
-- `Sources/WeChatSalesAgentApp/` for the native Swift entry point and basic diagnostics window.
-- `Sources/AgentCore/` for profile gate, diagnostic models, process probing, command execution, and package gate orchestration.
+- `app/Phase0App/` for the native AppKit entry point, Info.plist, and basic diagnostics window.
+- `native-worker/phase0_worker.py` for profile gate, diagnostic events, process probing, and local worker orchestration.
 - `native-worker/` for the minimal Python worker scripts and GumJS probe assets.
 - `scripts/` for deterministic local verification commands.
 - `dist/` for generated artifacts, ignored by git.
@@ -127,7 +128,7 @@ Phase 0 should be verified with a local validation manifest, for example `artifa
 
 Required validation dimensions:
 
-1. **Build:** Swift package/app builds for arm64 and produces the expected executable/app bundle.
+1. **Build:** Objective-C/AppKit `.app` builds for arm64 and produces the expected executable/app bundle.
 2. **Package identity:** local signing state is detected; Developer ID identity absence is reported as a terminal missing credential.
 3. **Exact profile:** matching WeChat profile passes only when version/build/full hash/slice hash all match; no running process or mismatch fails closed.
 4. **Worker lifecycle:** Python/Frida worker can report version, attach/load/unload/detach on a permitted running target, and cleanup leaves no matching helper.
@@ -137,8 +138,8 @@ Required validation dimensions:
 
 ## Suggested Plan Breakdown
 
-1. Create Swift package/app skeleton, diagnostics models, and scripts.
-2. Implement exact profile gate and hash probe with fixtures/tests.
+1. Create Objective-C/AppKit `.app` skeleton, diagnostic JSON launch output, and scripts.
+2. Implement exact profile gate and hash probe in the Python worker.
 3. Implement package/signing diagnostics and ad-hoc build script with Developer ID missing state.
 4. Implement Python worker command contract for version/profile/attach lifecycle smoke.
 5. Wrap Chatlog key/read smoke diagnostics.
