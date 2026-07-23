@@ -33,6 +33,44 @@ class ChatlogClient:
             raise ChatlogError("CHATLOG_SESSIONS_INVALID", "Chatlog sessions response did not contain a sessions array.")
         return sessions
 
+    def history_page(self, chat: str, since: int, until: int, limit: int, offset: int, is_self: bool) -> Dict:
+        data = self.get_json("/api/v1/history", {
+            "chat": chat,
+            "since": str(since),
+            "until": str(until),
+            "limit": str(limit),
+            "offset": str(offset),
+            "is_self": "true" if is_self else "false",
+            "format": "json",
+        })
+        if not isinstance(data, dict) or not isinstance(data.get("messages"), list):
+            raise ChatlogError("CHATLOG_HISTORY_INVALID", "Chatlog history response did not contain a messages array.")
+        return data
+
+    def history(self, chat: str, since: int, until: int, page_size: int = 500) -> List[Dict]:
+        merged = []
+        for is_self in (False, True):
+            offset = 0
+            expected = None
+            direction = []
+            while True:
+                page = self.history_page(chat, since, until, page_size, offset, is_self)
+                if expected is None:
+                    expected = int(page.get("total_count") or 0)
+                messages = page["messages"]
+                for item in messages:
+                    row = dict(item)
+                    row["is_self"] = is_self
+                    direction.append(row)
+                offset += len(messages)
+                if not messages or offset >= expected:
+                    break
+            if len(direction) != expected:
+                raise ChatlogError("CHATLOG_HISTORY_PAGINATION_LOSS", "History pagination count did not match Chatlog total for %s." % chat)
+            merged.extend(direction)
+        merged.sort(key=lambda item: (int(item.get("timestamp") or 0), int(item.get("local_id") or 0), bool(item.get("is_self"))))
+        return merged
+
     def get_json(self, path: str, query: Optional[Dict[str, str]] = None) -> Dict:
         raw = self.get_text(path, query)
         if raw.startswith("200 OK\n"):
@@ -74,4 +112,3 @@ def derive_account_ids(db_map: Dict[str, Iterable[str]]) -> List[str]:
         if account_id:
             account_ids.add(account_id)
     return sorted(account_ids)
-

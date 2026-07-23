@@ -99,9 +99,9 @@
 | REQ-DATA-003 | Phase 1 | Complete |
 | REQ-DATA-004 | Phase 1 | Complete |
 | REQ-DATA-005 | Phase 1 | Complete |
-| REQ-LEAD-001 | Phase 2 | Pending |
-| REQ-LEAD-002 | Phase 2 | Pending |
-| REQ-LEAD-003 | Phase 2 | Pending |
+| REQ-LEAD-001 | Phase 2 | Complete |
+| REQ-LEAD-002 | Phase 2 | Complete |
+| REQ-LEAD-003 | Phase 2 | Complete |
 | REQ-LEAD-004 | Phase 3 | Pending |
 | REQ-LEAD-005 | Phase 3 | Pending |
 | REQ-LEAD-006 | Phase 3 | Pending |

@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 0: Commercial Delivery and Exact Profile Gate** - Local automated gates passed; Developer ID notarization, clean-Mac install, and live WeChat text-send smoke still need human/external verification.
 - [x] **Phase 1: Account, Key, and Consistent Sync Foundation** - One verified account now produces fresh account-scoped decrypted data generations with Keychain verification and atomic publish.
-- [ ] **Phase 2: Deterministic Private-Chat Corpus and Evidence Index** - Users can create an auditable private-chat candidate corpus with deterministic extracted facts and immutable evidence IDs.
+- [x] **Phase 2: Deterministic Private-Chat Corpus and Evidence Index** - A full 183-day corpus now contains deterministic private eligibility, inbound facts, and immutable evidence IDs.
 - [ ] **Phase 3: DeepSeek Structured Analysis and Cost Ledger** - Users can generate validated intention scores, evidence-backed judgments, costs, and compliant personalized drafts.
 - [ ] **Phase 4: Native Desktop Lead Workspace and Excel Export** - Users can review, filter, inspect, and export lead snapshots in a professional macOS desktop workspace.
 - [ ] **Phase 5: Native Adapter Spikes and Certification Registry** - Text, image, video, and file adapters are independently certified before any attachment type can be exposed for sending.
@@ -58,7 +58,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Phone, landline, WeChat ID, age, grade, region, available time, budget, explicit need, and obstacle candidates are extracted deterministically from source messages.
   4. Every extracted field and signal links to an immutable evidence ID containing account, generation, conversation, message, sender, time, and content hash.
   5. Fixture and spot-check output proves no pagination loss, no cross-account mixing, and no wrong-sender evidence binding.
-**Plans**: TBD
+**Plans**: 1/1 complete
 
 ### Phase 3: DeepSeek Structured Analysis and Cost Ledger
 **Goal**: Users can obtain strict, evidence-backed DeepSeek judgments, intention bands, token costs, and compliant personalized activation drafts over only necessary candidate evidence.
@@ -132,7 +132,7 @@ Phases execute in numeric order: 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7
 |-------|----------------|--------|-----------|
 | 0. Commercial Delivery and Exact Profile Gate | 4/4 local | Human needed | - |
 | 1. Account, Key, and Consistent Sync Foundation | 1/1 | Complete | 2026-07-23 |
-| 2. Deterministic Private-Chat Corpus and Evidence Index | 0/TBD | Not started | - |
+| 2. Deterministic Private-Chat Corpus and Evidence Index | 1/1 | Complete | 2026-07-23 |
 | 3. DeepSeek Structured Analysis and Cost Ledger | 0/TBD | Not started | - |
 | 4. Native Desktop Lead Workspace and Excel Export | 0/TBD | Not started | - |
 | 5. Native Adapter Spikes and Certification Registry | 0/TBD | Not started | - |

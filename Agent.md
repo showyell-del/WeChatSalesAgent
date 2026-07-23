@@ -53,3 +53,14 @@
 - Chatlog's `security add-generic-password -w` prompt form does not read a secret from piped stdin in this non-interactive runtime; it created an empty item and was removed. The verified CLI form passes the value explicitly. Replace that transport with Security.framework when the native desktop target owns Keychain access.
 - `scripts/phase1_sync.sh sync --account-id wxid_3prysbeqgvci22_9f8d --limit 5000` verified an account-bound staged generation containing 1,202 sessions. Publishing a later generation atomically marks the prior published generation `old`; a failed staging generation leaves the prior published generation unchanged.
 - `scripts/phase1_validate.sh` runs unit tests, Python compilation, Chatlog health, account discovery, account switch, key/decrypted-database verification, live decrypt/sync, and state readback. Runtime state is written only to ignored `runtime/agent_state.sqlite3`.
+
+## Phase 2 verified private-chat corpus path
+
+- Use `since` and `until` epoch seconds for `/api/v1/history`; the `time=YYYY-MM-DD~YYYY-MM-DD` form is not a verified range for this build.
+- Read each conversation twice with `is_self=false` and `is_self=true`. The API returns an accurate direction-specific `total_count` when that filter is present; page until the fetched count equals it. Do not infer sender direction from display names.
+- `scripts/phase2_corpus.sh --account-id wxid_3prysbeqgvci22_9f8d --days 183 --page-size 500` completed a full, non-sampled run over 1,202 sessions: 244 bidirectional private conversations were eligible, 958 were excluded, and 47,479 immutable evidence references were published.
+- Static exclusions are explicit: group chat, `gh_` official account, known system holder, and named service entry. Remaining conversations require at least one inbound and one outbound non-system text message in range.
+- Evidence IDs bind account, source generation, conversation, local message ID, direction, sender, timestamp, and content SHA-256. Evidence bodies are globally deduplicated; `corpus_evidence` maps immutable evidence into each corpus rebuild.
+- Deterministic facts are extracted only from inbound evidence. The verified published corpus contains 739 fact references across phone, landline, age, grade, region, budget, available time, obstacle, and dance-specific explicit need fields.
+- Broad generic region/time/course patterns produced false positives and were removed. Current region extraction uses known administrative names or explicit address context; available-time extraction requires a time expression paired with availability or visit/class intent; explicit need is dance-specific.
+- `scripts/phase2_validate.sh` verifies unit tests, Python compilation, full corpus/session count equality, account/generation scope, content hashes, reconstructed evidence IDs, direction rules, fact foreign keys, and absence of eligible conversations without evidence.
