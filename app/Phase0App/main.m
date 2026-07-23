@@ -134,12 +134,34 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     return [NSJSONSerialization JSONObjectWithData:data options:0 error:error];
 }
 
+- (NSDictionary *)loadReadiness:(NSError **)error {
+    NSString *pythonRoot = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Python"];
+    NSTask *task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/python3"];
+    task.arguments = @[@"-m", @"agent_core.workspace_cli", @"--db", self.currentDBPath, @"readiness"];
+    NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+    environment[@"PYTHONPATH"] = pythonRoot;
+    task.environment = environment;
+    NSPipe *pipe = [NSPipe pipe];
+    task.standardOutput = pipe;
+    task.standardError = pipe;
+    if (![task launchAndReturnError:error]) return nil;
+    [task waitUntilExit];
+    NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+    if (task.terminationStatus != 0) return nil;
+    id value = [NSJSONSerialization JSONObjectWithData:data options:0 error:error];
+    return [value isKindOfClass:NSDictionary.class] ? value : nil;
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     NSError *error = nil;
     self.snapshot = self.snapshotPath.length ? [self loadSnapshotAtPath:self.snapshotPath error:&error] : [self loadCurrentSnapshot:&error];
     if (!self.snapshot) {
         self.startupError = error.localizedDescription ?: @"尚无已发布的客户分析，请先配置 DeepSeek 并完成分析。";
-        self.snapshot = @{ @"metrics": @{ @"customer_total": @0, @"high_intent": @0, @"activation_needed": @0, @"recent_leads": @0, @"distribution": @{} }, @"leads": @[], @"run": @{}, @"account_id": @"未连接" };
+        NSDictionary *readiness = self.snapshotPath.length ? nil : [self loadReadiness:nil];
+        NSString *accountID = readiness[@"account_id"] ?: @"未连接";
+        NSNumber *eligible = readiness[@"eligible_conversations"] ?: @0;
+        self.snapshot = @{ @"metrics": @{ @"customer_total": eligible, @"high_intent": @0, @"activation_needed": @0, @"recent_leads": @0, @"distribution": @{} }, @"leads": @[], @"run": @{}, @"account_id": accountID };
     }
     self.allLeads = self.snapshot[@"leads"] ?: @[];
     self.visibleLeads = self.allLeads;
@@ -251,10 +273,24 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索客户、需求、阻碍、联系方式"; self.search.delegate = self; self.search.target = self; self.search.action = @selector(applyFilters:);
     self.bandFilter = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     [self.bandFilter addItemsWithTitles:@[@"全部意向", @"高意向", @"待激活", @"长期培育", @"排除"]]; self.bandFilter.target = self; self.bandFilter.action = @selector(applyFilters:);
-    [workspace addSubview:self.search]; [workspace addSubview:self.bandFilter]; self.search.translatesAutoresizingMaskIntoConstraints = self.bandFilter.translatesAutoresizingMaskIntoConstraints = NO;
+    NSButton *saveKeyButton = [NSButton buttonWithTitle:@"保存 DeepSeek Key" target:self action:@selector(saveDeepSeekKey:)];
+    saveKeyButton.bezelStyle = NSBezelStyleTexturedRounded;
+    NSButton *estimateButton = [NSButton buttonWithTitle:@"估算成本" target:self action:@selector(estimateAI:)];
+    estimateButton.bezelStyle = NSBezelStyleTexturedRounded;
+    NSButton *runAIButton = [NSButton buttonWithTitle:@"运行 DeepSeek" target:self action:@selector(runAIAnalysis:)];
+    runAIButton.bezelStyle = NSBezelStyleTexturedRounded;
+    runAIButton.contentTintColor = NSColor.systemPurpleColor;
+    NSButton *refreshButton = [NSButton buttonWithTitle:@"刷新结果" target:self action:@selector(refreshSnapshot:)];
+    refreshButton.bezelStyle = NSBezelStyleTexturedRounded;
+    [workspace addSubview:self.search]; [workspace addSubview:self.bandFilter]; [workspace addSubview:saveKeyButton]; [workspace addSubview:estimateButton]; [workspace addSubview:runAIButton]; [workspace addSubview:refreshButton];
+    for (NSView *view in @[self.search, self.bandFilter, saveKeyButton, estimateButton, runAIButton, refreshButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
         [self.search.leadingAnchor constraintEqualToAnchor:workspace.leadingAnchor constant:16], [self.search.topAnchor constraintEqualToAnchor:workspace.topAnchor constant:14], [self.search.widthAnchor constraintEqualToConstant:310],
-        [self.bandFilter.leadingAnchor constraintEqualToAnchor:self.search.trailingAnchor constant:10], [self.bandFilter.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor], [self.bandFilter.widthAnchor constraintEqualToConstant:120]
+        [self.bandFilter.leadingAnchor constraintEqualToAnchor:self.search.trailingAnchor constant:10], [self.bandFilter.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor], [self.bandFilter.widthAnchor constraintEqualToConstant:120],
+        [saveKeyButton.leadingAnchor constraintEqualToAnchor:self.bandFilter.trailingAnchor constant:12], [saveKeyButton.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor],
+        [estimateButton.leadingAnchor constraintEqualToAnchor:saveKeyButton.trailingAnchor constant:8], [estimateButton.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor],
+        [runAIButton.leadingAnchor constraintEqualToAnchor:estimateButton.trailingAnchor constant:8], [runAIButton.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor],
+        [refreshButton.leadingAnchor constraintEqualToAnchor:runAIButton.trailingAnchor constant:8], [refreshButton.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor], [refreshButton.trailingAnchor constraintLessThanOrEqualToAnchor:workspace.trailingAnchor constant:-16]
     ]];
 
     self.table = [[NSTableView alloc] initWithFrame:NSZeroRect]; self.table.dataSource = self; self.table.delegate = self; self.table.headerView = [[NSTableHeaderView alloc] init]; self.table.rowHeight = 38; self.table.usesAlternatingRowBackgroundColors = YES; self.table.backgroundColor = NSColor.whiteColor; self.table.gridColor = [NSColor colorWithWhite:0.9 alpha:1];
@@ -290,7 +326,7 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
         [self.batchStatusLabel.leadingAnchor constraintEqualToAnchor:self.detailTitle.leadingAnchor], [self.batchStatusLabel.trailingAnchor constraintEqualToAnchor:self.detailTitle.trailingAnchor], [self.batchStatusLabel.bottomAnchor constraintEqualToAnchor:detail.bottomAnchor constant:-12],
         [draftScroll.bottomAnchor constraintEqualToAnchor:self.batchStatusLabel.topAnchor constant:-8]
     ]];
-    if (self.startupError.length) { self.detailTitle.stringValue = @"分析尚未就绪"; self.detailText.string = self.startupError; }
+    if (self.startupError.length) { self.detailTitle.stringValue = @"分析尚未就绪"; self.detailText.string = [self startupDetailText]; }
     else if (self.visibleLeads.count) { [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO]; [self showLead:self.visibleLeads[0]]; }
 }
 
@@ -325,6 +361,12 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     self.draftText.string = lead[@"draft_text"] ?: @"";
 }
 
+- (NSString *)startupDetailText {
+    NSString *accountID = self.snapshot[@"account_id"] ?: @"未连接";
+    NSNumber *eligible = self.snapshot[@"metrics"][@"customer_total"] ?: @0;
+    return [NSString stringWithFormat:@"当前账号：%@\n待分析私聊客户：%@\n\n下一步：\n1. 点击“保存 DeepSeek Key”写入本机 Keychain。\n2. 点击“估算成本”确认候选数和预计费用。\n3. 点击“运行 DeepSeek”生成线索客户表。\n\n系统不会在缺少 Key 或外部传输批准时上传聊天证据。\n\n原始诊断：\n%@", accountID, eligible, self.startupError ?: @""];
+}
+
 - (void)applyFilters:(id)sender {
     NSString *query = self.search.stringValue.lowercaseString;
     NSString *band = self.bandFilter.titleOfSelectedItem;
@@ -347,6 +389,10 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
 }
 
 - (NSArray<NSString *> *)runAgentCommand:(NSArray<NSString *> *)arguments terminationStatus:(int *)status error:(NSError **)error {
+    return [self runAgentCommand:arguments stdinString:nil terminationStatus:status error:error];
+}
+
+- (NSArray<NSString *> *)runAgentCommand:(NSArray<NSString *> *)arguments stdinString:(NSString *)stdinString terminationStatus:(int *)status error:(NSError **)error {
     NSString *pythonRoot = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Python"];
     NSTask *task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/python3"];
@@ -357,7 +403,17 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     NSPipe *pipe = [NSPipe pipe];
     task.standardOutput = pipe;
     task.standardError = pipe;
+    NSPipe *inputPipe = nil;
+    if (stdinString) {
+        inputPipe = [NSPipe pipe];
+        task.standardInput = inputPipe;
+    }
     if (![task launchAndReturnError:error]) return @[];
+    if (stdinString) {
+        NSData *input = [stdinString dataUsingEncoding:NSUTF8StringEncoding];
+        [inputPipe.fileHandleForWriting writeData:input ?: NSData.data];
+        [inputPipe.fileHandleForWriting closeFile];
+    }
     [task waitUntilExit];
     if (status) *status = task.terminationStatus;
     NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
@@ -371,9 +427,112 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     for (NSString *line in lines.reverseObjectEnumerator) {
         NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
         id object = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-        if ([object isKindOfClass:NSDictionary.class] && object[@"batch_id"]) return object;
+        if ([object isKindOfClass:NSDictionary.class]) return object;
     }
     return nil;
+}
+
+- (void)rebuildWorkspaceWithMessage:(NSString *)message color:(NSColor *)color {
+    NSRect frame = self.window.frame;
+    [self.window orderOut:nil];
+    self.window = nil;
+    [self buildWindow];
+    [self.window setFrame:frame display:YES];
+    if (message.length) {
+        self.statusLabel.stringValue = message;
+        self.statusLabel.textColor = color ?: NSColor.systemGreenColor;
+    }
+    [self.window makeKeyAndOrderFront:nil];
+}
+
+- (NSString *)messageFromEvent:(NSDictionary *)eventObject fallback:(NSString *)fallback {
+    NSString *code = eventObject[@"code"] ?: @"";
+    NSString *message = eventObject[@"message"] ?: fallback ?: @"";
+    return code.length ? [NSString stringWithFormat:@"%@：%@", code, message] : message;
+}
+
+- (void)saveDeepSeekKey:(id)sender {
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"保存 DeepSeek API Key";
+    alert.informativeText = @"Key 会写入本机 macOS Keychain，不会保存到项目文件。";
+    NSSecureTextField *field = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(0, 0, 420, 24)];
+    field.placeholderString = @"sk-...";
+    alert.accessoryView = field;
+    [alert addButtonWithTitle:@"保存"];
+    [alert addButtonWithTitle:@"取消"];
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    NSString *key = [field.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!key.length) { NSBeep(); self.statusLabel.stringValue = @"DeepSeek Key 不能为空"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+    int status = 0;
+    NSError *error = nil;
+    NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.ai_cli", @"--db", self.currentDBPath, @"set-key"] stdinString:key terminationStatus:&status error:&error];
+    NSDictionary *eventObject = [self lastJSONObjectFromLines:lines];
+    self.statusLabel.stringValue = status == 0 ? @"DeepSeek Key 已保存" : [self messageFromEvent:eventObject fallback:(error.localizedDescription ?: @"DeepSeek Key 保存失败")];
+    self.statusLabel.textColor = status == 0 ? NSColor.systemGreenColor : NSColor.systemRedColor;
+}
+
+- (void)estimateAI:(id)sender {
+    NSString *accountID = self.snapshot[@"account_id"] ?: @"";
+    if (!accountID.length || [accountID isEqualToString:@"未连接"]) { NSBeep(); self.statusLabel.stringValue = @"没有可估算的账号"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+    int status = 0;
+    NSError *error = nil;
+    NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.ai_cli", @"--db", self.currentDBPath, @"estimate", @"--account-id", accountID] terminationStatus:&status error:&error];
+    NSDictionary *eventObject = [self lastJSONObjectFromLines:lines];
+    NSDictionary *evidence = eventObject[@"evidence"];
+    if (status == 0 && [evidence isKindOfClass:NSDictionary.class]) {
+        self.statusLabel.stringValue = [NSString stringWithFormat:@"预计 %@ 个候选 · 约 $%@", evidence[@"candidates"] ?: @"0", evidence[@"estimated_cost_usd"] ?: @"0"];
+        self.statusLabel.textColor = NSColor.systemBlueColor;
+    } else {
+        self.statusLabel.stringValue = [self messageFromEvent:eventObject fallback:(error.localizedDescription ?: @"成本估算失败")];
+        self.statusLabel.textColor = NSColor.systemRedColor;
+    }
+}
+
+- (void)runAIAnalysis:(id)sender {
+    NSString *accountID = self.snapshot[@"account_id"] ?: @"";
+    if (!accountID.length || [accountID isEqualToString:@"未连接"]) { NSBeep(); self.statusLabel.stringValue = @"没有可分析的账号"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"运行 DeepSeek 分析？";
+    alert.informativeText = @"确认后会按业务配置把候选聊天证据发送给 DeepSeek；如果 Key 或外部传输批准缺失，会在本地失败并不会上传。";
+    [alert addButtonWithTitle:@"运行分析"];
+    [alert addButtonWithTitle:@"取消"];
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    self.statusLabel.stringValue = @"DeepSeek 分析运行中…";
+    self.statusLabel.textColor = NSColor.systemOrangeColor;
+    int status = 0;
+    NSError *error = nil;
+    NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.ai_cli", @"--db", self.currentDBPath, @"run", @"--account-id", accountID, @"--timeout", @"120"] terminationStatus:&status error:&error];
+    NSDictionary *eventObject = [self lastJSONObjectFromLines:lines];
+    if (status == 0) {
+        NSError *loadError = nil;
+        NSDictionary *newSnapshot = [self loadCurrentSnapshot:&loadError];
+        if (newSnapshot) {
+            self.snapshot = newSnapshot;
+            self.allLeads = self.snapshot[@"leads"] ?: @[];
+            self.visibleLeads = self.allLeads;
+            [self rebuildWorkspaceWithMessage:@"DeepSeek 分析已发布" color:NSColor.systemGreenColor];
+        } else {
+            self.statusLabel.stringValue = loadError.localizedDescription ?: @"分析完成但刷新失败";
+            self.statusLabel.textColor = NSColor.systemRedColor;
+        }
+    } else {
+        self.statusLabel.stringValue = [self messageFromEvent:eventObject fallback:(error.localizedDescription ?: @"DeepSeek 分析失败")];
+        self.statusLabel.textColor = NSColor.systemRedColor;
+    }
+}
+
+- (void)refreshSnapshot:(id)sender {
+    NSError *error = nil;
+    NSDictionary *newSnapshot = self.snapshotPath.length ? [self loadSnapshotAtPath:self.snapshotPath error:&error] : [self loadCurrentSnapshot:&error];
+    if (!newSnapshot) {
+        self.statusLabel.stringValue = error.localizedDescription ?: @"刷新失败";
+        self.statusLabel.textColor = NSColor.systemRedColor;
+        return;
+    }
+    self.snapshot = newSnapshot;
+    self.allLeads = self.snapshot[@"leads"] ?: @[];
+    self.visibleLeads = self.allLeads;
+    [self rebuildWorkspaceWithMessage:@"结果已刷新" color:NSColor.systemGreenColor];
 }
 
 - (void)chooseAttachments:(id)sender {

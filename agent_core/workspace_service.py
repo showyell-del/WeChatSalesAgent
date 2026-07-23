@@ -165,3 +165,55 @@ def load_snapshot(db_path: str, account_id: str = "") -> Dict:
         raise WorkspaceError("WORKSPACE_DATABASE_INVALID", str(exc)) from exc
     finally:
         connection.close()
+
+
+def workspace_readiness(db_path: str) -> Dict:
+    connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    try:
+        account_id = ""
+        published = connection.execute(
+            "SELECT account_id,count(*) published_runs FROM analysis_runs WHERE status='published' GROUP BY account_id ORDER BY max(published_at) DESC LIMIT 1"
+        ).fetchone()
+        if published is not None:
+            account_id = published["account_id"]
+        else:
+            corpus = connection.execute(
+                "SELECT account_id FROM corpus_runs WHERE status='published' ORDER BY published_at DESC LIMIT 1"
+            ).fetchone()
+            if corpus is not None:
+                account_id = corpus["account_id"]
+            else:
+                account = connection.execute("SELECT account_id FROM accounts ORDER BY updated_at DESC LIMIT 1").fetchone()
+                if account is not None:
+                    account_id = account["account_id"]
+        if not account_id:
+            return {"account_id": "", "published_runs": 0, "eligible_conversations": 0, "lead_results": 0}
+        published_runs = connection.execute(
+            "SELECT count(*) FROM analysis_runs WHERE account_id=? AND status='published'",
+            (account_id,),
+        ).fetchone()[0]
+        lead_results = connection.execute(
+            """SELECT count(*)
+               FROM lead_results lr
+               JOIN analysis_runs ar ON ar.run_id=lr.run_id
+               WHERE ar.account_id=? AND ar.status='published'""",
+            (account_id,),
+        ).fetchone()[0]
+        eligible = connection.execute(
+            """SELECT count(*)
+               FROM corpus_conversations cc
+               JOIN corpus_runs cr ON cr.corpus_id=cc.corpus_id
+               WHERE cr.account_id=? AND cr.status='published' AND cc.status='eligible'""",
+            (account_id,),
+        ).fetchone()[0]
+        return {
+            "account_id": account_id,
+            "published_runs": int(published_runs),
+            "eligible_conversations": int(eligible),
+            "lead_results": int(lead_results),
+        }
+    except sqlite3.Error as exc:
+        raise WorkspaceError("WORKSPACE_DATABASE_INVALID", str(exc)) from exc
+    finally:
+        connection.close()

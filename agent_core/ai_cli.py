@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import sys
 from decimal import Decimal
 
 from pydantic import ValidationError
@@ -14,6 +15,21 @@ from .keychain import KeychainStore
 
 
 DEEPSEEK_KEYCHAIN_SERVICE = "com.wechat-sales-agent.deepseek-api-key"
+
+
+def command_set_key(args):
+    try:
+        key = sys.stdin.read().strip()
+        if not key:
+            raise AnalysisError("DEEPSEEK_API_KEY_EMPTY", "DeepSeek API Key cannot be empty.")
+        KeychainStore(DEEPSEEK_KEYCHAIN_SERVICE).put_and_verify("default", key)
+        emit(event("ai_key", "passed", "DEEPSEEK_API_KEY_SAVED", "DeepSeek API Key saved to macOS Keychain."))
+        return 0
+    except (RuntimeError, AnalysisError) as exc:
+        code = exc.code if isinstance(exc, AnalysisError) else "DEEPSEEK_API_KEY_SAVE_FAILED"
+        message = exc.message if isinstance(exc, AnalysisError) else str(exc)
+        emit(event("ai_key", "failed", code, message))
+        return 1
 
 
 def command_configure(args):
@@ -114,6 +130,7 @@ def build_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default="runtime/agent_state.sqlite3")
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("set-key").set_defaults(func=command_set_key)
     configure = sub.add_parser("configure")
     configure.add_argument("--business-file", required=True)
     configure.add_argument("--base-url", default="https://api.deepseek.com")

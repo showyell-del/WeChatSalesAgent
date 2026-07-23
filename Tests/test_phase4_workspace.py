@@ -5,7 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from agent_core.workspace_service import WorkspaceError, load_snapshot
+from agent_core.workspace_service import WorkspaceError, load_snapshot, workspace_readiness
 
 
 SCHEMA = """
@@ -92,6 +92,10 @@ class Phase4WorkspaceTests(unittest.TestCase):
                 load_snapshot(path, "account_1")
             self.assertEqual(caught.exception.code, "PUBLISHED_ANALYSIS_MISSING")
             self.assertIn("1 eligible", caught.exception.message)
+            readiness = workspace_readiness(path)
+            self.assertEqual(readiness["account_id"], "account_1")
+            self.assertEqual(readiness["eligible_conversations"], 1)
+            self.assertEqual(readiness["published_runs"], 0)
 
 
 if __name__ == "__main__":
