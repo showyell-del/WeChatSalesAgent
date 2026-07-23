@@ -89,3 +89,40 @@
 - 文本、图片、视频和文件分别通过真实私聊发送、Ack、取消和清理测试。
 - 完成至少 100 个目标的连续串行发送测试，无错发、无残留 Frida helper、无微信持续高 CPU 或失去登录状态。
 - 桌面界面不暴露无商业价值的 Chatlog 通用功能。
+
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| REQ-DATA-001 | Phase 1 | Pending |
+| REQ-DATA-002 | Phase 1 | Pending |
+| REQ-DATA-003 | Phase 1 | Pending |
+| REQ-DATA-004 | Phase 1 | Pending |
+| REQ-DATA-005 | Phase 1 | Pending |
+| REQ-LEAD-001 | Phase 2 | Pending |
+| REQ-LEAD-002 | Phase 2 | Pending |
+| REQ-LEAD-003 | Phase 2 | Pending |
+| REQ-LEAD-004 | Phase 3 | Pending |
+| REQ-LEAD-005 | Phase 3 | Pending |
+| REQ-LEAD-006 | Phase 3 | Pending |
+| REQ-LEAD-007 | Phase 3 | Pending |
+| REQ-LEAD-008 | Phase 3 | Pending |
+| REQ-UI-001 | Phase 4 | Pending |
+| REQ-UI-002 | Phase 4 | Pending |
+| REQ-UI-003 | Phase 4 | Pending |
+| REQ-UI-004 | Phase 4 | Pending |
+| REQ-UI-005 | Phase 4 | Pending |
+| REQ-AI-001 | Phase 3 | Pending |
+| REQ-AI-002 | Phase 3 | Pending |
+| REQ-AI-003 | Phase 3 | Pending |
+| REQ-AI-004 | Phase 3 | Pending |
+| REQ-AI-005 | Phase 3 | Pending |
+| REQ-SEND-001 | Phase 6 | Pending |
+| REQ-SEND-002 | Phase 6 | Pending |
+| REQ-SEND-003 | Phase 5 | Pending |
+| REQ-SEND-004 | Phase 6 | Pending |
+| REQ-SEND-005 | Phase 6 | Pending |
+| REQ-SEND-006 | Phase 6 | Pending |
+| REQ-SEND-007 | Phase 6 | Pending |
+| REQ-SEND-008 | Phase 6 | Pending |
+| REQ-SEND-009 | Phase 6 | Pending |
