@@ -76,3 +76,12 @@
 - Required fact evidence is selected deterministically before recent context. Whole selected records must fit the 18-evidence/7,000-character packet bounds; required evidence overflow fails with `AI_CONTEXT_TOO_LARGE` rather than truncating, summarizing, or dropping facts.
 - `scripts/phase3_validate.sh` passes 18 tests, including one-call mock transport, strict JSON/schema rejection, evidence membership, forbidden claims, exact usage/cost arithmetic, atomic result+ledger persistence, full mocked analysis publication, live candidate selection, and cost estimation.
 - The current machine has no DeepSeek API Key in the product Keychain; `scripts/phase3_ai.sh run ...` reports `DEEPSEEK_API_KEY_MISSING` and makes no provider call. The example profile also keeps `external_api_data_transfer_approved=false` and `minor_data_approved=false` until the operator explicitly confirms those gates.
+
+## Phase 4 verified native workspace and export path
+
+- `agent_core.workspace_service.load_snapshot` is the only read model for the dashboard, customer table, evidence detail, drafts, token counts, costs, and Excel export. It accepts only one published analysis run and fails with `PUBLISHED_ANALYSIS_MISSING` instead of showing corpus candidates as analyzed leads.
+- `app/Phase0App/main.m` is now the native AppKit merchant workspace. It contains no WebView or local Web server and supports KPI cards, customer/need/contact search, intention-band filtering, evidence detail, and editable activation copy.
+- Force the app to `NSAppearanceNameAqua` and explicitly set table/text-view backgrounds. Without this, a dark macOS appearance produces black embedded table and text surfaces inside the light workspace.
+- An `NSTextView` used as an `NSScrollView.documentView` needs a non-zero initial frame, vertical resizing, and `textContainer.widthTracksTextView=YES`; a zero-frame text view rendered blank even though its string was populated.
+- `scripts/phase4_export.sh` uses the bundled spreadsheet runtime and `@oai/artifact-tool` to publish a real filterable XLSX. Resolve the output path before changing into the temporary module directory or a relative export will be deleted with that directory.
+- `scripts/phase4_validate.sh` verifies the native UI, visual PNG render, strict snapshot behavior, spreadsheet formulas, formula-error scan, visual sheet renders, XLSX archive, and end-to-end export wrapper.

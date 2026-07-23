@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 3 local DeepSeek pipeline verified; Phase 4 native desktop workspace is next while the real API call remains human-gated.
-last_updated: "2026-07-23T15:30:00Z"
-last_activity: 2026-07-23 — Implemented strict one-call DeepSeek analysis, privacy gates, evidence validation, and exact token/cost ledger; local verification passed and the real API key is not configured.
+stopped_at: Phase 4 native workspace and XLSX export verified locally; Phase 5 native adapter certification is next while real analysis remains human-gated.
+last_updated: "2026-07-23T15:50:00Z"
+last_activity: 2026-07-23 — Replaced the placeholder with a native AppKit lead workspace and verified real XLSX export from one immutable published analysis fixture.
 progress:
   total_phases: 8
   completed_phases: 2
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 8
+  completed_plans: 8
   percent: 25
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-23)
 
 **Core value:** 从真实微信私聊中准确找到值得再激活的客户，给出可审计的业务证据，并安全完成触达闭环。
-**Current focus:** Phase 4: Native Desktop Lead Workspace and Excel Export
+**Current focus:** Phase 5: Native Adapter Spikes and Certification Registry
 
 ## Current Position
 
-Phase: 4 of 7 (Native Desktop Lead Workspace and Excel Export)
+Phase: 5 of 7 (Native Adapter Spikes and Certification Registry)
 Plan: 0/TBD
-Status: Ready to implement; Phase 3 real provider verification remains human-gated
-Last activity: 2026-07-23 — Phase 3 local DeepSeek implementation and validation passed; Phase 0 external commercial gates remain tracked.
+Status: Ready to implement; Phase 3/4 real-data verification remains human-gated
+Last activity: 2026-07-23 — Phase 4 native UI and workbook export passed local automated and visual verification; Phase 0 external commercial gates remain tracked.
 
 Progress: [███░░░░░░░] 25%
 
@@ -36,7 +36,7 @@ Progress: [███░░░░░░░] 25%
 
 **Velocity:**
 
-- Total plans completed: 7
+- Total plans completed: 8
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -48,6 +48,7 @@ Progress: [███░░░░░░░] 25%
 | 1 | 1 | 1 | N/A |
 | 2 | 1 | 1 | N/A |
 | 3 | 1 local | 1 local | N/A |
+| 4 | 1 local | 1 local | N/A |
 
 **Recent Trend:**
 
@@ -96,7 +97,7 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-07-23
-Stopped at: Phase 3 local implementation complete; implement Phase 4 native desktop workspace while keeping Phase 0 and live DeepSeek gates open.
+Stopped at: Phase 4 local implementation complete; implement Phase 5 native adapter certification while keeping Phase 0 and live DeepSeek gates open.
 Resume file: None
 
 **Planned Phase:** 00 (commercial-delivery-and-exact-profile-gate) — 4 plans — 2026-07-23T12:41:44.756Z
@@ -108,3 +109,5 @@ Resume file: None
 **Executed Phase:** 02 deterministic private-chat corpus — 1/1 plan — passed — 2026-07-23
 
 **Executed Phase:** 03 DeepSeek structured analysis and cost ledger — 1/1 local plan — human_needed — 2026-07-23
+
+**Executed Phase:** 04 native desktop lead workspace and Excel export — 1/1 local plan — human_needed — 2026-07-23

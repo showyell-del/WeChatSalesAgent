@@ -83,7 +83,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. User can open a customer detail view with evidence, extracted key facts, suggested action, and draft text without raw database structure or native debug pages.
   4. User can export the current lead snapshot to a formatted, filterable Excel workbook containing evidence, actions, drafts, cost metadata, and send-result columns.
   5. Dashboard, table, detail, and export values all derive from the same immutable snapshot and show no hidden stale or recalculated data drift.
-**Plans**: TBD
+**Plans**: 1/1 local implementation complete; verification status `human_needed` until a real published DeepSeek run is available
 **UI hint**: yes
 
 ### Phase 5: Native Adapter Spikes and Certification Registry
@@ -134,7 +134,7 @@ Phases execute in numeric order: 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 1. Account, Key, and Consistent Sync Foundation | 1/1 | Complete | 2026-07-23 |
 | 2. Deterministic Private-Chat Corpus and Evidence Index | 1/1 | Complete | 2026-07-23 |
 | 3. DeepSeek Structured Analysis and Cost Ledger | 1/1 local | Human needed | - |
-| 4. Native Desktop Lead Workspace and Excel Export | 0/TBD | Not started | - |
+| 4. Native Desktop Lead Workspace and Excel Export | 1/1 local | Human needed | - |
 | 5. Native Adapter Spikes and Certification Registry | 0/TBD | Not started | - |
 | 6. Immutable Send Plan and Single-Owner Batch Lifecycle | 0/TBD | Not started | - |
 | 7. Real Business Acceptance and Release Gate | 0/TBD | Not started | - |

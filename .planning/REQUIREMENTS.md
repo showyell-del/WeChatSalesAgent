@@ -107,11 +107,11 @@
 | REQ-LEAD-006 | Phase 3 | Implemented; live provider verification pending |
 | REQ-LEAD-007 | Phase 3 | Implemented; live provider verification pending |
 | REQ-LEAD-008 | Phase 3 | Implemented; live provider verification pending |
-| REQ-UI-001 | Phase 4 | Pending |
-| REQ-UI-002 | Phase 4 | Pending |
-| REQ-UI-003 | Phase 4 | Pending |
-| REQ-UI-004 | Phase 4 | Pending |
-| REQ-UI-005 | Phase 4 | Pending |
+| REQ-UI-001 | Phase 4 | Implemented; real analysis verification pending |
+| REQ-UI-002 | Phase 4 | Implemented; real analysis verification pending |
+| REQ-UI-003 | Phase 4 | Implemented; real analysis verification pending |
+| REQ-UI-004 | Phase 4 | Implemented; real analysis verification pending |
+| REQ-UI-005 | Phase 4 | Implemented; real analysis verification pending |
 | REQ-AI-001 | Phase 3 | Implemented; API Key gate pending |
 | REQ-AI-002 | Phase 3 | Implemented; transfer approval pending |
 | REQ-AI-003 | Phase 3 | Implemented; live provider verification pending |

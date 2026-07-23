@@ -11,9 +11,13 @@ json_event() {
 
 APP_DIR="dist/phase0/WeChatSalesAgent.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
-mkdir -p "$MACOS_DIR"
+RESOURCES_DIR="$APP_DIR/Contents/Resources"
+PROJECT_DIR="$(pwd)"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR/Python"
 cp app/Phase0App/Info.plist "$APP_DIR/Contents/Info.plist"
-/usr/bin/clang -fobjc-arc -framework Cocoa -framework Foundation app/Phase0App/main.m -o "$MACOS_DIR/WeChatSalesAgent"
+rm -rf "$RESOURCES_DIR/Python/agent_core"
+cp -R agent_core "$RESOURCES_DIR/Python/agent_core"
+/usr/bin/clang -fobjc-arc -framework Cocoa -framework Foundation "-DPROJECT_DIR=\"$PROJECT_DIR\"" app/Phase0App/main.m -o "$MACOS_DIR/WeChatSalesAgent"
 /usr/bin/codesign -s - --force --deep "$APP_DIR"
 json_event "package" "passed" "AD_HOC_SIGNED_LOCAL_ONLY" "Local ad-hoc signed artifact was produced for development verification only."
 
