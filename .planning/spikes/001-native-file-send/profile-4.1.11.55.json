@@ -1,0 +1,16 @@
+{
+  "ambiguous": {},
+  "dylib_sha256": "c2a4794b343625a8013752095e76bc688acd42d48f30001a255620db2fc542a9",
+  "frida_version": "16.7.19",
+  "offsets": {
+    "buf2RespAddr": "0x3e7eaf0",
+    "cndOnCompleteAddr": "0x3e15bcc",
+    "req2bufEnterAddr": "0x3e5930c",
+    "sendFuncAddr": "0x5121478",
+    "uploadGetCallbackWrapperAddr": "0x525afc0",
+    "uploadImageAddr": "0x529c21c"
+  },
+  "source": "read-only pattern scan; candidates require instruction and live observation validation",
+  "wechat_build": "269111",
+  "wechat_bundle_version": "4.1.11.55"
+}
