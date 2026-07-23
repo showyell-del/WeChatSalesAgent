@@ -208,17 +208,20 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     NSButton *batchButton = [NSButton buttonWithTitle:@"创建发送批次" target:self action:@selector(createSendBatch:)];
     batchButton.bezelStyle = NSBezelStyleTexturedRounded;
     batchButton.contentTintColor = NSColor.systemOrangeColor;
+    NSButton *cancelButton = [NSButton buttonWithTitle:@"取消批次" target:self action:@selector(cancelSendBatch:)];
+    cancelButton.bezelStyle = NSBezelStyleTexturedRounded;
     NSButton *dispatchButton = [NSButton buttonWithTitle:@"执行发送" target:self action:@selector(dispatchSendBatch:)];
     dispatchButton.bezelStyle = NSBezelStyleTexturedRounded;
     dispatchButton.contentTintColor = NSColor.systemRedColor;
-    [content addSubview:title]; [content addSubview:subtitle]; [content addSubview:self.statusLabel]; [content addSubview:exportButton]; [content addSubview:attachButton]; [content addSubview:batchButton]; [content addSubview:dispatchButton];
-    for (NSView *view in @[title, subtitle, self.statusLabel, exportButton, attachButton, batchButton, dispatchButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:title]; [content addSubview:subtitle]; [content addSubview:self.statusLabel]; [content addSubview:exportButton]; [content addSubview:attachButton]; [content addSubview:batchButton]; [content addSubview:cancelButton]; [content addSubview:dispatchButton];
+    for (NSView *view in @[title, subtitle, self.statusLabel, exportButton, attachButton, batchButton, cancelButton, dispatchButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
         [title.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:28], [title.topAnchor constraintEqualToAnchor:content.topAnchor constant:24],
         [subtitle.leadingAnchor constraintEqualToAnchor:title.leadingAnchor], [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:4],
         [exportButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-28], [exportButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
         [dispatchButton.trailingAnchor constraintEqualToAnchor:exportButton.leadingAnchor constant:-8], [dispatchButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
-        [batchButton.trailingAnchor constraintEqualToAnchor:dispatchButton.leadingAnchor constant:-8], [batchButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [cancelButton.trailingAnchor constraintEqualToAnchor:dispatchButton.leadingAnchor constant:-8], [cancelButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [batchButton.trailingAnchor constraintEqualToAnchor:cancelButton.leadingAnchor constant:-8], [batchButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
         [attachButton.trailingAnchor constraintEqualToAnchor:batchButton.leadingAnchor constant:-8], [attachButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
         [self.statusLabel.trailingAnchor constraintEqualToAnchor:attachButton.leadingAnchor constant:-18], [self.statusLabel.centerYAnchor constraintEqualToAnchor:title.centerYAnchor]
     ]];
@@ -400,6 +403,36 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     return ids;
 }
 
+- (NSString *)attachmentSummaryFromBatch:(NSDictionary *)batch {
+    NSArray *attachments = batch[@"attachments"];
+    if (![attachments isKindOfClass:NSArray.class] || !attachments.count) return @"";
+    unsigned long long totalBytes = 0;
+    NSMutableDictionary<NSString *, NSNumber *> *types = [NSMutableDictionary dictionary];
+    NSString *firstHash = @"";
+    for (NSDictionary *attachment in attachments) {
+        if (![attachment isKindOfClass:NSDictionary.class]) continue;
+        totalBytes += [attachment[@"size_bytes"] unsignedLongLongValue];
+        NSString *type = attachment[@"media_type"] ?: @"file";
+        types[type] = @([types[type] integerValue] + 1);
+        if (!firstHash.length) firstHash = [attachment[@"sha256"] ?: @"" substringToIndex:MIN((NSUInteger)8, [attachment[@"sha256"] ?: @"" length])];
+    }
+    NSString *size = [NSByteCountFormatter stringFromByteCount:(long long)totalBytes countStyle:NSByteCountFormatterCountStyleFile];
+    return [NSString stringWithFormat:@" · %lu 个附件 %@ · SHA %@", (unsigned long)attachments.count, size, firstHash];
+}
+
+- (NSString *)previewMessageForBatch:(NSDictionary *)batch {
+    NSArray *recipients = batch[@"recipients"];
+    NSMutableString *message = [NSMutableString stringWithFormat:@"将发送给 %@ 个线索客户%@。\n\n", batch[@"total"] ?: @0, [self attachmentSummaryFromBatch:batch]];
+    NSUInteger limit = MIN((NSUInteger)5, recipients.count);
+    for (NSUInteger index = 0; index < limit; index += 1) {
+        NSDictionary *recipient = recipients[index];
+        [message appendFormat:@"- %@：%@\n", recipient[@"display_name"] ?: recipient[@"customer_id"] ?: @"客户", recipient[@"final_text"] ?: @""];
+    }
+    if (recipients.count > limit) [message appendFormat:@"…另有 %lu 位客户\n", (unsigned long)(recipients.count - limit)];
+    [message appendString:@"\n确认后才会进入原生发送执行。"];
+    return message;
+}
+
 - (BOOL)createSendBatchInternal {
     NSArray<NSString *> *customerIDs = self.actionableVisibleCustomerIDs;
     if (!customerIDs.count) { NSBeep(); self.batchStatusLabel.stringValue = @"当前筛选没有高意向/待激活客户"; return NO; }
@@ -418,7 +451,7 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
         return NO;
     }
     self.currentBatchID = batch[@"batch_id"];
-    self.batchStatusLabel.stringValue = [NSString stringWithFormat:@"批次 %@ 已创建 · %@ 人", [self.currentBatchID substringToIndex:MIN((NSUInteger)8, self.currentBatchID.length)], batch[@"total"] ?: @0];
+    self.batchStatusLabel.stringValue = [NSString stringWithFormat:@"批次 %@ 已创建 · %@ 人%@", [self.currentBatchID substringToIndex:MIN((NSUInteger)8, self.currentBatchID.length)], batch[@"total"] ?: @0, [self attachmentSummaryFromBatch:batch]];
     self.batchStatusLabel.textColor = NSColor.systemOrangeColor;
     return YES;
 }
@@ -431,6 +464,19 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     if (!self.currentBatchID.length && ![self createSendBatchInternal]) return;
     int status = 0;
     NSError *error = nil;
+    NSArray<NSString *> *previewLines = [self runAgentCommand:@[@"-m", @"agent_core.send_cli", @"--db", self.currentDBPath, @"show", @"--batch-id", self.currentBatchID] terminationStatus:&status error:&error];
+    NSDictionary *previewBatch = [self lastJSONObjectFromLines:previewLines];
+    if (status != 0 || !previewBatch) {
+        self.batchStatusLabel.stringValue = error.localizedDescription ?: @"发送预览失败";
+        self.batchStatusLabel.textColor = NSColor.systemRedColor;
+        return;
+    }
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"确认执行发送？";
+    alert.informativeText = [self previewMessageForBatch:previewBatch];
+    [alert addButtonWithTitle:@"确认发送"];
+    [alert addButtonWithTitle:@"取消"];
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
     NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.send_cli", @"--db", self.currentDBPath, @"dispatch", @"--batch-id", self.currentBatchID] terminationStatus:&status error:&error];
     NSDictionary *batch = [self lastJSONObjectFromLines:lines];
     if (!batch) {
@@ -441,6 +487,21 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     NSString *label = batch[@"status_label"] ?: batch[@"status"] ?: @"未知";
     self.batchStatusLabel.stringValue = [NSString stringWithFormat:@"发送状态：%@ · %@ 人", label, batch[@"total"] ?: @0];
     self.batchStatusLabel.textColor = status == 0 ? NSColor.systemGreenColor : NSColor.systemRedColor;
+}
+
+- (void)cancelSendBatch:(id)sender {
+    if (!self.currentBatchID.length) { NSBeep(); self.batchStatusLabel.stringValue = @"没有可取消的发送批次"; return; }
+    int status = 0;
+    NSError *error = nil;
+    NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.send_cli", @"--db", self.currentDBPath, @"cancel", @"--batch-id", self.currentBatchID] terminationStatus:&status error:&error];
+    NSDictionary *batch = [self lastJSONObjectFromLines:lines];
+    if (status != 0 || !batch) {
+        self.batchStatusLabel.stringValue = error.localizedDescription ?: @"取消批次失败";
+        self.batchStatusLabel.textColor = NSColor.systemRedColor;
+        return;
+    }
+    self.batchStatusLabel.stringValue = [NSString stringWithFormat:@"批次 %@ 已取消 · %@ 人", [self.currentBatchID substringToIndex:MIN((NSUInteger)8, self.currentBatchID.length)], batch[@"total"] ?: @0];
+    self.batchStatusLabel.textColor = NSColor.systemGrayColor;
 }
 
 - (void)exportWorkbook:(id)sender {

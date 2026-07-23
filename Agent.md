@@ -96,9 +96,13 @@
 
 ## Phase 6 verified send lifecycle path
 
+- `agent_core.send_certification` is the local native-adapter certification registry for the exact WeChat profile. Runtime capabilities currently report `CERTIFICATION_MISSING` for `text`, `image`, `video`, and `file`; dispatch blocks according to the specific required types for each batch.
 - `agent_core.send_store.SendStore` owns local send batches and recipients in `send_batches` and `send_recipients`; workspace `send_status` must be projected from this audited local state rather than hard-coded.
 - Creating a batch is not a send. `scripts/phase6_send.sh create --account-id <id> --text <message>` selects only actionable leads (`高意向`, `待激活`) unless explicit customer IDs/bands are supplied, stores the final per-recipient text, and marks recipients `已排队`.
+- Send-plan attachments are audited before batch creation. Missing or non-file paths fail closed; accepted files store local path, filename, extension, media type, byte size, and SHA-256 in `attachments_json`.
+- Queued recipients can be cancelled before dispatch. A later blocked dispatch must only mark remaining queued recipients as failed/blocked and must preserve cancelled recipients.
 - `scripts/phase6_send.sh dispatch --batch-id <id>` currently fails closed with `NATIVE_SEND_ADAPTER_NOT_CERTIFIED`; it records the batch as `发送阻断` and never reports success until native text/image/video/file delivery has real `Buf2Resp`/receiver verification.
-- The native AppKit workspace has send controls in the top toolbar: choose attachments, create a send batch, and execute dispatch. The UI only includes currently visible actionable leads (`高意向`, `待激活`) when creating a batch; it must not send to `长期培育` or `排除` customers from an all-filter view.
+- The native AppKit workspace has send controls in the top toolbar: choose attachments, create a send batch, cancel the current batch, and execute dispatch. The UI only includes currently visible actionable leads (`高意向`, `待激活`) when creating a batch; it must not send to `长期培育` or `排除` customers from an all-filter view.
 - The right-side send status field is a real AppKit file-drop target. Merchants can drag local images, videos, or files onto it; the same attachment path list is used by the toolbar file picker and by send-batch creation.
-- `scripts/phase6_validate.sh` verifies send batch creation, blocked dispatch, and workspace send-status projection.
+- Before dispatch, the native AppKit workspace shows a final confirmation with target count, attachment summary, and sample personalized texts. This confirmation precedes the external-send side effect; local batch creation is only the durable send plan.
+- `scripts/phase6_validate.sh` verifies send batch creation, attachment audit, certification-required type detection, blocked dispatch, cancellation, and workspace send-status projection.

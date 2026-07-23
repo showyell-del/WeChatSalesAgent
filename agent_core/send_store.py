@@ -1,9 +1,12 @@
+import hashlib
 import json
 import sqlite3
 import time
 import uuid
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+from .send_certification import ensure_certification_schema
 from .workspace_service import WorkspaceError, load_snapshot
 
 
@@ -44,6 +47,8 @@ ON send_recipients(customer_id, queued_at DESC);
 """
 
 ACTIONABLE_BANDS = {"高意向", "待激活"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
 STATUS_LABELS = {
     "queued": "已排队",
     "blocked": "发送阻断",
@@ -66,6 +71,7 @@ class SendStore:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SEND_SCHEMA)
+        ensure_certification_schema(self.conn)
 
     def close(self) -> None:
         self.conn.close()
@@ -79,6 +85,69 @@ class SendStore:
             raise SendError("PUBLISHED_ANALYSIS_MISSING", "No published lead analysis is available for sending.")
         return str(row["run_id"])
 
+    def _audit_attachment(self, value: str) -> Dict:
+        path = Path(value).expanduser()
+        if not path.exists():
+            raise SendError("SEND_ATTACHMENT_NOT_FOUND", f"Attachment does not exist: {value}")
+        if not path.is_file():
+            raise SendError("SEND_ATTACHMENT_NOT_FILE", f"Attachment is not a file: {value}")
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        extension = path.suffix.lower()
+        if extension in IMAGE_EXTENSIONS:
+            media_type = "image"
+        elif extension in VIDEO_EXTENSIONS:
+            media_type = "video"
+        else:
+            media_type = "file"
+        return {
+            "path": str(path),
+            "name": path.name,
+            "extension": extension,
+            "media_type": media_type,
+            "size_bytes": path.stat().st_size,
+            "sha256": digest.hexdigest(),
+        }
+
+    def _audit_attachments(self, attachments: Optional[Iterable[str]]) -> List[Dict]:
+        return [self._audit_attachment(str(item).strip()) for item in (attachments or []) if str(item).strip()]
+
+    def _refresh_batch_counts(self, batch_id: str) -> None:
+        row = self.conn.execute(
+            """SELECT
+                   SUM(CASE WHEN status='succeeded' THEN 1 ELSE 0 END) succeeded,
+                   SUM(CASE WHEN status IN ('failed','blocked') THEN 1 ELSE 0 END) failed,
+                   SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) queued,
+                   SUM(CASE WHEN status='sending' THEN 1 ELSE 0 END) sending,
+                   SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) cancelled,
+                   COUNT(*) total
+               FROM send_recipients WHERE batch_id=?""",
+            (batch_id,),
+        ).fetchone()
+        if row is None or row["total"] == 0:
+            raise SendError("SEND_BATCH_NOT_FOUND", "Send batch was not found.")
+        if row["sending"]:
+            status = "sending"
+            ended_at = None
+        elif row["queued"]:
+            status = "queued"
+            ended_at = None
+        elif row["failed"]:
+            status = "blocked"
+            ended_at = int(time.time())
+        elif row["cancelled"] == row["total"]:
+            status = "cancelled"
+            ended_at = int(time.time())
+        else:
+            status = "succeeded"
+            ended_at = int(time.time())
+        self.conn.execute(
+            "UPDATE send_batches SET status=?, ended_at=COALESCE(ended_at,?), succeeded=?, failed=? WHERE batch_id=?",
+            (status, ended_at, row["succeeded"] or 0, row["failed"] or 0, batch_id),
+        )
+
     def create_batch(
         self,
         account_id: str,
@@ -90,7 +159,7 @@ class SendStore:
         text = message_text.strip()
         if not text:
             raise SendError("SEND_TEXT_EMPTY", "Batch send text cannot be empty.")
-        attachment_list = [item for item in (attachments or []) if str(item).strip()]
+        attachment_list = self._audit_attachments(attachments)
         run_id = self._published_run_id(account_id)
         snapshot = load_snapshot(self.conn.execute("PRAGMA database_list").fetchone()["file"], account_id)
         wanted_ids = {item.strip() for item in (customer_ids or []) if item.strip()}
@@ -162,7 +231,7 @@ class SendStore:
         with self.conn:
             updated = self.conn.execute(
                 """UPDATE send_batches
-                   SET status='blocked', started_at=COALESCE(started_at,?), ended_at=?, failed=total,
+                   SET status='blocked', started_at=COALESCE(started_at,?), ended_at=?,
                        blocked_code=?, blocked_message=?
                    WHERE batch_id=?""",
                 (now, now, code, message, batch_id),
@@ -175,6 +244,44 @@ class SendStore:
                    WHERE batch_id=? AND status='queued'""",
                 (code, message, batch_id),
             )
+            self._refresh_batch_counts(batch_id)
+        return self.batch(batch_id)
+
+    def cancel_batch(self, batch_id: str) -> Dict:
+        now = int(time.time())
+        with self.conn:
+            existing = self.conn.execute("SELECT batch_id FROM send_batches WHERE batch_id=?", (batch_id,)).fetchone()
+            if existing is None:
+                raise SendError("SEND_BATCH_NOT_FOUND", "Send batch was not found.")
+            updated = self.conn.execute(
+                """UPDATE send_recipients
+                   SET status='cancelled', result_code='SEND_CANCELLED', result_message='Recipient was cancelled before dispatch.'
+                   WHERE batch_id=? AND status='queued'""",
+                (batch_id,),
+            )
+            if updated.rowcount == 0:
+                raise SendError("SEND_CANCEL_NOT_AVAILABLE", "No queued recipients are available to cancel.")
+            self.conn.execute("UPDATE send_batches SET ended_at=COALESCE(ended_at,?) WHERE batch_id=?", (now, batch_id))
+            self._refresh_batch_counts(batch_id)
+        return self.batch(batch_id)
+
+    def cancel_recipient(self, batch_id: str, customer_id: str) -> Dict:
+        with self.conn:
+            existing = self.conn.execute(
+                "SELECT status FROM send_recipients WHERE batch_id=? AND customer_id=?",
+                (batch_id, customer_id),
+            ).fetchone()
+            if existing is None:
+                raise SendError("SEND_RECIPIENT_NOT_FOUND", "Send recipient was not found.")
+            if existing["status"] != "queued":
+                raise SendError("SEND_CANCEL_NOT_AVAILABLE", "Only queued recipients can be cancelled.")
+            self.conn.execute(
+                """UPDATE send_recipients
+                   SET status='cancelled', result_code='SEND_CANCELLED', result_message='Recipient was cancelled before dispatch.'
+                   WHERE batch_id=? AND customer_id=?""",
+                (batch_id, customer_id),
+            )
+            self._refresh_batch_counts(batch_id)
         return self.batch(batch_id)
 
 
