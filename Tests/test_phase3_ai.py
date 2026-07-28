@@ -167,6 +167,32 @@ class Phase3AITests(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_business_profile_transfer_approval_preserves_minor_gate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "state.sqlite3")
+            sync = SyncStore(path)
+            sync.close()
+            connection = sqlite3.connect(path)
+            CorpusStore(connection)
+            connection.close()
+            store = AnalysisStore(path)
+            try:
+                profile = business_profile().model_copy(update={
+                    "external_api_data_transfer_approved": False,
+                    "minor_data_approved": False,
+                })
+                store.configure({
+                    "base_url": "https://api.deepseek.com", "model": "deepseek-v4-flash", "max_tokens": 1400,
+                    "cache_hit_usd_per_million": "0.0028", "cache_miss_usd_per_million": "0.14", "output_usd_per_million": "0.28",
+                }, profile.model_dump_json())
+                updated = profile.model_copy(update={"external_api_data_transfer_approved": True})
+                store.update_business_profile(updated.model_dump_json())
+                current = BusinessProfile.model_validate(store.config()["business_profile"])
+                self.assertTrue(current.external_api_data_transfer_approved)
+                self.assertFalse(current.minor_data_approved)
+            finally:
+                store.close()
+
     def test_full_analysis_run_publishes_one_mocked_lead(self):
         captured = []
 

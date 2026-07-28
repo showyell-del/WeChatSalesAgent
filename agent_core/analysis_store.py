@@ -130,6 +130,14 @@ class AnalysisStore:
         result["business_profile"] = json.loads(profile["profile_json"])
         return result
 
+    def update_business_profile(self, profile_json: str) -> None:
+        now = int(time.time())
+        with self.conn:
+            existing = self.conn.execute("SELECT profile_id FROM business_profiles WHERE profile_id=1").fetchone()
+            if existing is None:
+                raise RuntimeError("AI_CONFIGURATION_MISSING")
+            self.conn.execute("UPDATE business_profiles SET profile_json=?,updated_at=? WHERE profile_id=1", (profile_json, now))
+
     def published_corpus(self, account_id: str) -> Dict:
         row = self.conn.execute("SELECT * FROM corpus_runs WHERE account_id=? AND status='published' ORDER BY published_at DESC LIMIT 1", (account_id,)).fetchone()
         if row is None:

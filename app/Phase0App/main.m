@@ -275,6 +275,8 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     [self.bandFilter addItemsWithTitles:@[@"全部意向", @"高意向", @"待激活", @"长期培育", @"排除"]]; self.bandFilter.target = self; self.bandFilter.action = @selector(applyFilters:);
     NSButton *saveKeyButton = [NSButton buttonWithTitle:@"保存 DeepSeek Key" target:self action:@selector(saveDeepSeekKey:)];
     saveKeyButton.bezelStyle = NSBezelStyleTexturedRounded;
+    NSButton *approveTransferButton = [NSButton buttonWithTitle:@"批准传输" target:self action:@selector(approveDeepSeekTransfer:)];
+    approveTransferButton.bezelStyle = NSBezelStyleTexturedRounded;
     NSButton *estimateButton = [NSButton buttonWithTitle:@"估算成本" target:self action:@selector(estimateAI:)];
     estimateButton.bezelStyle = NSBezelStyleTexturedRounded;
     NSButton *runAIButton = [NSButton buttonWithTitle:@"运行 DeepSeek" target:self action:@selector(runAIAnalysis:)];
@@ -282,13 +284,14 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     runAIButton.contentTintColor = NSColor.systemPurpleColor;
     NSButton *refreshButton = [NSButton buttonWithTitle:@"刷新结果" target:self action:@selector(refreshSnapshot:)];
     refreshButton.bezelStyle = NSBezelStyleTexturedRounded;
-    [workspace addSubview:self.search]; [workspace addSubview:self.bandFilter]; [workspace addSubview:saveKeyButton]; [workspace addSubview:estimateButton]; [workspace addSubview:runAIButton]; [workspace addSubview:refreshButton];
-    for (NSView *view in @[self.search, self.bandFilter, saveKeyButton, estimateButton, runAIButton, refreshButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
+    [workspace addSubview:self.search]; [workspace addSubview:self.bandFilter]; [workspace addSubview:saveKeyButton]; [workspace addSubview:approveTransferButton]; [workspace addSubview:estimateButton]; [workspace addSubview:runAIButton]; [workspace addSubview:refreshButton];
+    for (NSView *view in @[self.search, self.bandFilter, saveKeyButton, approveTransferButton, estimateButton, runAIButton, refreshButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
         [self.search.leadingAnchor constraintEqualToAnchor:workspace.leadingAnchor constant:16], [self.search.topAnchor constraintEqualToAnchor:workspace.topAnchor constant:14], [self.search.widthAnchor constraintEqualToConstant:310],
         [self.bandFilter.leadingAnchor constraintEqualToAnchor:self.search.trailingAnchor constant:10], [self.bandFilter.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor], [self.bandFilter.widthAnchor constraintEqualToConstant:120],
         [saveKeyButton.leadingAnchor constraintEqualToAnchor:self.bandFilter.trailingAnchor constant:12], [saveKeyButton.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor],
-        [estimateButton.leadingAnchor constraintEqualToAnchor:saveKeyButton.trailingAnchor constant:8], [estimateButton.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor],
+        [approveTransferButton.leadingAnchor constraintEqualToAnchor:saveKeyButton.trailingAnchor constant:8], [approveTransferButton.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor],
+        [estimateButton.leadingAnchor constraintEqualToAnchor:approveTransferButton.trailingAnchor constant:8], [estimateButton.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor],
         [runAIButton.leadingAnchor constraintEqualToAnchor:estimateButton.trailingAnchor constant:8], [runAIButton.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor],
         [refreshButton.leadingAnchor constraintEqualToAnchor:runAIButton.trailingAnchor constant:8], [refreshButton.centerYAnchor constraintEqualToAnchor:self.search.centerYAnchor], [refreshButton.trailingAnchor constraintLessThanOrEqualToAnchor:workspace.trailingAnchor constant:-16]
     ]];
@@ -364,7 +367,7 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
 - (NSString *)startupDetailText {
     NSString *accountID = self.snapshot[@"account_id"] ?: @"未连接";
     NSNumber *eligible = self.snapshot[@"metrics"][@"customer_total"] ?: @0;
-    return [NSString stringWithFormat:@"当前账号：%@\n待分析私聊客户：%@\n\n下一步：\n1. 点击“保存 DeepSeek Key”写入本机 Keychain。\n2. 点击“估算成本”确认候选数和预计费用。\n3. 点击“运行 DeepSeek”生成线索客户表。\n\n系统不会在缺少 Key 或外部传输批准时上传聊天证据。\n\n原始诊断：\n%@", accountID, eligible, self.startupError ?: @""];
+    return [NSString stringWithFormat:@"当前账号：%@\n待分析私聊客户：%@\n\n下一步：\n1. 点击“保存 DeepSeek Key”写入本机 Keychain。\n2. 点击“批准传输”允许候选聊天证据发送到 DeepSeek。\n3. 点击“估算成本”确认候选数和预计费用。\n4. 点击“运行 DeepSeek”生成线索客户表。\n\n系统不会在缺少 Key 或外部传输批准时上传聊天证据；未成年人相关对话仍按当前配置排除。", accountID, eligible];
 }
 
 - (void)applyFilters:(id)sender {
@@ -468,6 +471,21 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.ai_cli", @"--db", self.currentDBPath, @"set-key"] stdinString:key terminationStatus:&status error:&error];
     NSDictionary *eventObject = [self lastJSONObjectFromLines:lines];
     self.statusLabel.stringValue = status == 0 ? @"DeepSeek Key 已保存" : [self messageFromEvent:eventObject fallback:(error.localizedDescription ?: @"DeepSeek Key 保存失败")];
+    self.statusLabel.textColor = status == 0 ? NSColor.systemGreenColor : NSColor.systemRedColor;
+}
+
+- (void)approveDeepSeekTransfer:(id)sender {
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"批准发送候选聊天证据到 DeepSeek？";
+    alert.informativeText = @"此操作只打开外部 API 传输批准，不会默认包含未成年人相关对话；未成年人数据仍按当前配置排除。";
+    [alert addButtonWithTitle:@"批准"];
+    [alert addButtonWithTitle:@"取消"];
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    int status = 0;
+    NSError *error = nil;
+    NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.ai_cli", @"--db", self.currentDBPath, @"approve-transfer"] terminationStatus:&status error:&error];
+    NSDictionary *eventObject = [self lastJSONObjectFromLines:lines];
+    self.statusLabel.stringValue = status == 0 ? @"DeepSeek 外部传输已批准" : [self messageFromEvent:eventObject fallback:(error.localizedDescription ?: @"批准传输失败")];
     self.statusLabel.textColor = status == 0 ? NSColor.systemGreenColor : NSColor.systemRedColor;
 }
 

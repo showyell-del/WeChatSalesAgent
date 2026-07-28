@@ -32,6 +32,25 @@ def command_set_key(args):
         return 1
 
 
+def command_approve_transfer(args):
+    try:
+        store = AnalysisStore(args.db)
+        try:
+            config = store.config()
+            profile = BusinessProfile.model_validate(config["business_profile"])
+            updated = profile.model_copy(update={"external_api_data_transfer_approved": True})
+            store.update_business_profile(updated.model_dump_json())
+        finally:
+            store.close()
+        emit(event("ai_config", "passed", "AI_EXTERNAL_TRANSFER_APPROVED", "External DeepSeek personal-data transfer approved in business configuration.", {
+            "minor_data_approved": str(updated.minor_data_approved).lower(),
+        }))
+        return 0
+    except (RuntimeError, ValidationError) as exc:
+        emit(event("ai_config", "failed", "AI_TRANSFER_APPROVAL_FAILED", str(exc)))
+        return 1
+
+
 def command_configure(args):
     try:
         with open(args.business_file, "r", encoding="utf-8") as handle:
@@ -131,6 +150,7 @@ def build_parser():
     parser.add_argument("--db", default="runtime/agent_state.sqlite3")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("set-key").set_defaults(func=command_set_key)
+    sub.add_parser("approve-transfer").set_defaults(func=command_approve_transfer)
     configure = sub.add_parser("configure")
     configure.add_argument("--business-file", required=True)
     configure.add_argument("--base-url", default="https://api.deepseek.com")
