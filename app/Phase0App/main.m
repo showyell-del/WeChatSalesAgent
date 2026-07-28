@@ -218,7 +218,8 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
         [content.topAnchor constraintEqualToAnchor:root.topAnchor], [content.bottomAnchor constraintEqualToAnchor:root.bottomAnchor]
     ]];
 
-    NSTextField *title = Label(@"线索客户工作台", 26, [NSColor colorWithRed:0.06 green:0.10 blue:0.20 alpha:1], YES);
+    BOOL hasPublishedAnalysis = !self.startupError.length;
+    NSTextField *title = Label(hasPublishedAnalysis ? @"线索客户工作台" : @"微信私聊筛选", 26, [NSColor colorWithRed:0.06 green:0.10 blue:0.20 alpha:1], YES);
     NSString *account = self.snapshot[@"account_id"] ?: @"";
     NSTextField *subtitle = Label([NSString stringWithFormat:@"账号 %@ · 所有判断均可回溯到真实聊天证据", account], 12, [NSColor colorWithWhite:0.42 alpha:1], NO);
     self.statusLabel = Label(self.startupError.length ? @"分析未就绪" : @"分析已发布", 12, self.startupError.length ? NSColor.systemRedColor : NSColor.systemGreenColor, YES);
@@ -251,7 +252,7 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
     NSDictionary *metrics = self.snapshot[@"metrics"];
     NSStackView *cards = [[NSStackView alloc] initWithFrame:NSZeroRect];
     cards.orientation = NSUserInterfaceLayoutOrientationHorizontal; cards.spacing = 12; cards.distribution = NSStackViewDistributionFillEqually;
-    [cards addArrangedSubview:Card(@"线索客户", [metrics[@"customer_total"] stringValue], [NSColor colorWithRed:0.08 green:0.19 blue:0.45 alpha:1])];
+    [cards addArrangedSubview:Card(hasPublishedAnalysis ? @"线索客户" : @"待筛选会话", [metrics[@"customer_total"] stringValue], [NSColor colorWithRed:0.08 green:0.19 blue:0.45 alpha:1])];
     [cards addArrangedSubview:Card(@"高意向", [metrics[@"high_intent"] stringValue], NSColor.systemGreenColor)];
     [cards addArrangedSubview:Card(@"待激活", [metrics[@"activation_needed"] stringValue], NSColor.systemOrangeColor)];
     [cards addArrangedSubview:Card(@"近 30 天联系", [metrics[@"recent_leads"] stringValue], NSColor.systemBlueColor)];
@@ -367,7 +368,7 @@ static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
 - (NSString *)startupDetailText {
     NSString *accountID = self.snapshot[@"account_id"] ?: @"未连接";
     NSNumber *eligible = self.snapshot[@"metrics"][@"customer_total"] ?: @0;
-    return [NSString stringWithFormat:@"当前账号：%@\n待分析私聊客户：%@\n\n下一步：\n1. 点击“保存 DeepSeek Key”写入本机 Keychain。\n2. 点击“批准传输”允许候选聊天证据发送到 DeepSeek。\n3. 点击“估算成本”确认候选数和预计费用。\n4. 点击“运行 DeepSeek”生成线索客户表。\n\n系统不会在缺少 Key 或外部传输批准时上传聊天证据；未成年人相关对话仍按当前配置排除。", accountID, eligible];
+    return [NSString stringWithFormat:@"当前账号：%@\n待筛选私聊会话：%@\n\n下一步：\n1. 点击“保存 DeepSeek Key”写入本机 Keychain。\n2. 点击“批准传输”允许候选聊天证据发送到 DeepSeek。\n3. 点击“估算成本”确认候选数和预计费用。\n4. 点击“运行 DeepSeek”生成线索客户表。\n\n这些会话尚未被判定为客户。系统不会在缺少 Key 或外部传输批准时上传聊天证据；未成年人相关对话仍按当前配置排除。", accountID, eligible];
 }
 
 - (void)applyFilters:(id)sender {
