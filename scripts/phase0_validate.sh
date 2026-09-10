@@ -11,7 +11,7 @@ json_event() {
 
 no_fallback_scan() {
   local matches
-  matches="$(rg -n "Hermes|clipboard|key simulation|share sheet|uploadappattach|sendappmsg" app native-worker scripts -g '!scripts/phase0_validate.sh' 2>/dev/null || true)"
+  matches="$(rg -n "Hermes|clipboard|key simulation|share sheet|uploadappattach|sendappmsg|native_send|send_daemon|send_cli|dispatchSendBatch|NativeWorker" app agent_core scripts -g '!scripts/phase0_validate.sh' 2>/dev/null || true)"
   if [[ -n "$matches" ]]; then
     printf '%s\n' "$matches" >&2
     json_event "no_fallback_scan" "failed" "FORBIDDEN_PRODUCTION_PATH_FOUND" "Forbidden production transport string was found."
@@ -24,20 +24,12 @@ run_package() {
   scripts/build_phase0_app.sh
 }
 
-run_worker() {
-  scripts/phase0_worker.sh version
-  scripts/phase0_worker.sh probe-process
-  scripts/phase0_worker.sh profile-gate
-  scripts/phase0_worker.sh attach-smoke
-}
-
 run_chatlog() {
   scripts/phase0_chatlog_smoke.sh --help-smoke
-  scripts/phase0_chatlog_smoke.sh --http-list-smoke
-}
-
-run_send_manifest() {
-  scripts/phase0_worker.sh text-send-smoke-manifest
+  local output
+  output="$(scripts/phase0_chatlog_smoke.sh --http-list-smoke)"
+  printf '%s\n' "$output"
+  printf '%s\n' "$output" | rg -q '"status":"passed","code":"CHATLOG_HTTP_LIST_CALLABLE"'
 }
 
 case "${1:-}" in
@@ -48,29 +40,21 @@ case "${1:-}" in
     ;;
   --full)
     run_package
-    run_worker
     run_chatlog
-    run_send_manifest
     no_fallback_scan
-    json_event "phase0_full" "passed" "PHASE0_FULL_PASSED" "Full Phase 0 validation passed with explicit blocked gates allowed."
+    json_event "phase0_full" "passed" "PHASE0_FULL_PASSED" "Full Phase 0 validation passed."
     ;;
   --package)
     run_package
     ;;
-  --worker)
-    run_worker
-    ;;
   --chatlog)
     run_chatlog
-    ;;
-  --send-smoke-manifest)
-    run_send_manifest
     ;;
   --no-fallback-scan)
     no_fallback_scan
     ;;
   *)
-    echo "Usage: $0 --quick|--full|--package|--worker|--chatlog|--send-smoke-manifest|--no-fallback-scan" >&2
+    echo "Usage: $0 --quick|--full|--package|--chatlog|--no-fallback-scan" >&2
     exit 2
     ;;
 esac

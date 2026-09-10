@@ -5,11 +5,11 @@ import uuid
 from decimal import Decimal
 from typing import Dict, List
 
+from .extractors import minor_indicators
+
 
 AI_SCHEMA = """
 PRAGMA foreign_keys=ON;
-
-CREATE INDEX IF NOT EXISTS evidence_by_username ON evidence(username, timestamp);
 
 CREATE TABLE IF NOT EXISTS ai_settings (
     setting_id INTEGER PRIMARY KEY CHECK(setting_id=1),
@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS ai_settings (
 CREATE TABLE IF NOT EXISTS business_profiles (
     profile_id INTEGER PRIMARY KEY CHECK(profile_id=1),
     profile_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_settings (
+    setting_id INTEGER PRIMARY KEY CHECK(setting_id=1),
+    model TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
 
@@ -89,13 +95,40 @@ CREATE TABLE IF NOT EXISTS lead_results (
     PRIMARY KEY(run_id, username),
     FOREIGN KEY(run_id) REFERENCES analysis_runs(run_id)
 );
+
+CREATE TABLE IF NOT EXISTS minor_screenings (
+    corpus_id TEXT NOT NULL,
+    username TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    indicators_json TEXT NOT NULL,
+    evidence_ids_json TEXT NOT NULL,
+    checked_at INTEGER NOT NULL,
+    PRIMARY KEY(corpus_id, username)
+);
 """
 
 CALL_COLUMNS = (
-    "call_id", "run_id", "username", "status", "request_sha256", "provider_response_id", "provider_model",
-    "system_fingerprint", "finish_reason", "prompt_tokens", "cache_hit_tokens", "cache_miss_tokens",
-    "completion_tokens", "total_tokens", "usage_json", "estimated_cost_usd", "actual_cost_usd", "response_sha256",
-    "error_code", "error_message", "created_at",
+    "call_id",
+    "run_id",
+    "username",
+    "status",
+    "request_sha256",
+    "provider_response_id",
+    "provider_model",
+    "system_fingerprint",
+    "finish_reason",
+    "prompt_tokens",
+    "cache_hit_tokens",
+    "cache_miss_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "usage_json",
+    "estimated_cost_usd",
+    "actual_cost_usd",
+    "response_sha256",
+    "error_code",
+    "error_message",
+    "created_at",
 )
 
 
@@ -112,39 +145,129 @@ class AnalysisStore:
     def close(self):
         self.conn.close()
 
+    def agent_model(self, default: str) -> str:
+        row = self.conn.execute(
+            "SELECT model FROM agent_settings WHERE setting_id=1"
+        ).fetchone()
+        return str(row["model"]) if row is not None else default
+
+    def set_agent_model(self, model: str):
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO agent_settings VALUES(1,?,?)",
+                (model, int(time.time())),
+            )
+
     def configure(self, settings: Dict, profile_json: str):
         now = int(time.time())
+        existing_settings = self.conn.execute(
+            "SELECT * FROM ai_settings WHERE setting_id=1"
+        ).fetchone()
+        existing_profile = self.conn.execute(
+            "SELECT profile_json FROM business_profiles WHERE profile_id=1"
+        ).fetchone()
+        normalized_profile = json.dumps(
+            json.loads(profile_json),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        setting_keys = (
+            "base_url",
+            "model",
+            "max_tokens",
+            "cache_hit_usd_per_million",
+            "cache_miss_usd_per_million",
+            "output_usd_per_million",
+        )
+        changed = existing_settings is not None and any(
+            str(existing_settings[key]) != str(settings[key]) for key in setting_keys
+        )
+        if existing_profile is not None:
+            changed = changed or json.loads(
+                existing_profile["profile_json"]
+            ) != json.loads(normalized_profile)
         with self.conn:
             self.conn.execute(
                 "INSERT OR REPLACE INTO ai_settings VALUES(1,?,?,?,?,?,?,?)",
-                (settings["base_url"], settings["model"], settings["max_tokens"], settings["cache_hit_usd_per_million"], settings["cache_miss_usd_per_million"], settings["output_usd_per_million"], now),
+                (
+                    settings["base_url"],
+                    settings["model"],
+                    settings["max_tokens"],
+                    settings["cache_hit_usd_per_million"],
+                    settings["cache_miss_usd_per_million"],
+                    settings["output_usd_per_million"],
+                    now,
+                ),
             )
-            self.conn.execute("INSERT OR REPLACE INTO business_profiles VALUES(1,?,?)", (profile_json, now))
+            self.conn.execute(
+                "INSERT OR REPLACE INTO business_profiles VALUES(1,?,?)",
+                (normalized_profile, now),
+            )
+            if changed:
+                self.conn.execute(
+                    "UPDATE analysis_runs SET status='superseded' WHERE status IN ('published','staging')"
+                )
+        return changed
 
     def config(self) -> Dict:
-        settings = self.conn.execute("SELECT * FROM ai_settings WHERE setting_id=1").fetchone()
-        profile = self.conn.execute("SELECT * FROM business_profiles WHERE profile_id=1").fetchone()
+        settings = self.conn.execute(
+            "SELECT * FROM ai_settings WHERE setting_id=1"
+        ).fetchone()
+        profile = self.conn.execute(
+            "SELECT * FROM business_profiles WHERE profile_id=1"
+        ).fetchone()
         if settings is None or profile is None:
             raise RuntimeError("AI_CONFIGURATION_MISSING")
         result = dict(settings)
         result["business_profile"] = json.loads(profile["profile_json"])
         return result
 
-    def update_business_profile(self, profile_json: str) -> None:
+    def update_business_profile(self, profile_json: str) -> bool:
         now = int(time.time())
+        normalized_profile = json.dumps(
+            json.loads(profile_json),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         with self.conn:
-            existing = self.conn.execute("SELECT profile_id FROM business_profiles WHERE profile_id=1").fetchone()
+            existing = self.conn.execute(
+                "SELECT profile_json FROM business_profiles WHERE profile_id=1"
+            ).fetchone()
             if existing is None:
                 raise RuntimeError("AI_CONFIGURATION_MISSING")
-            self.conn.execute("UPDATE business_profiles SET profile_json=?,updated_at=? WHERE profile_id=1", (profile_json, now))
+            changed = json.loads(existing["profile_json"]) != json.loads(
+                normalized_profile
+            )
+            self.conn.execute(
+                "UPDATE business_profiles SET profile_json=?,updated_at=? WHERE profile_id=1",
+                (normalized_profile, now),
+            )
+            if changed:
+                self.conn.execute(
+                    "UPDATE analysis_runs SET status='superseded' WHERE status IN ('published','staging')"
+                )
+        return changed
 
     def published_corpus(self, account_id: str) -> Dict:
-        row = self.conn.execute("SELECT * FROM corpus_runs WHERE account_id=? AND status='published' ORDER BY published_at DESC LIMIT 1", (account_id,)).fetchone()
+        row = self.conn.execute(
+            """SELECT cr.* FROM corpus_runs cr
+               JOIN generations g ON g.generation_id=cr.generation_id
+               WHERE cr.account_id=? AND cr.status='published' AND g.status='published'
+               ORDER BY cr.published_at DESC LIMIT 1""",
+            (account_id,),
+        ).fetchone()
         if row is None:
             raise RuntimeError("PUBLISHED_CORPUS_MISSING")
         return dict(row)
 
-    def candidates(self, corpus_id: str, lead_keywords: List[str], minor_data_approved: bool = False) -> Dict:
+    def candidates(
+        self,
+        corpus_id: str,
+        lead_keywords: List[str],
+        minor_data_approved: bool = False,
+    ) -> Dict:
         rows = self.conn.execute(
             """SELECT cc.username,cc.display_name,cc.latest_timestamp,
                       count(distinct f.evidence_id) fact_evidence_count
@@ -175,51 +298,120 @@ class AnalysisStore:
         for row in rows:
             item = dict(row)
             if item["fact_evidence_count"] or item["username"] in keyword_users:
-                if not minor_data_approved:
-                    ages = [fact[0] for fact in self.conn.execute(
-                        "SELECT value FROM extracted_facts WHERE corpus_id=? AND username=? AND field='age'",
+                evidence = list(
+                    self.conn.execute(
+                        """SELECT e.evidence_id,e.content FROM evidence e
+                       JOIN corpus_evidence ce ON ce.evidence_id=e.evidence_id
+                       WHERE ce.corpus_id=? AND e.username=? AND e.is_self=0""",
                         (corpus_id, item["username"]),
-                    )]
-                    if any(value.isdigit() and int(value) < 14 for value in ages):
-                        privacy_excluded += 1
-                        continue
+                    )
+                )
+                matches = []
+                evidence_ids = []
+                for evidence_item in evidence:
+                    found = minor_indicators(str(evidence_item["content"] or ""))
+                    if found:
+                        evidence_ids.append(evidence_item["evidence_id"])
+                        matches.extend(
+                            {**indicator, "evidence_id": evidence_item["evidence_id"]}
+                            for indicator in found
+                        )
+                decision = (
+                    "positive"
+                    if any(match["decision"] == "positive" for match in matches)
+                    else ("uncertain" if matches else "clear")
+                )
+                with self.conn:
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO minor_screenings VALUES(?,?,?,?,?,?)",
+                        (
+                            corpus_id,
+                            item["username"],
+                            decision,
+                            json.dumps(matches, ensure_ascii=False, sort_keys=True),
+                            json.dumps(sorted(set(evidence_ids)), ensure_ascii=False),
+                            int(time.time()),
+                        ),
+                    )
+                if not minor_data_approved and decision != "clear":
+                    privacy_excluded += 1
+                    continue
                 candidates.append(item)
         return {"candidates": candidates, "privacy_excluded": privacy_excluded}
 
-    def packet(self, corpus_id: str, username: str, max_evidence: int = 18, max_chars: int = 7000) -> Dict:
-        fact_rows = [dict(row) for row in self.conn.execute(
-            """SELECT f.field,f.value,f.evidence_id,f.extractor,e.timestamp
+    def packet(
+        self,
+        corpus_id: str,
+        username: str,
+        max_evidence: int = 18,
+        max_chars: int = 7000,
+    ) -> Dict:
+        fact_rows = [
+            dict(row)
+            for row in self.conn.execute(
+                """SELECT f.field,f.value,f.evidence_id,f.extractor,e.timestamp
                FROM extracted_facts f JOIN evidence e ON e.evidence_id=f.evidence_id
                WHERE f.corpus_id=? AND f.username=? ORDER BY e.timestamp DESC""",
-            (corpus_id, username),
-        )]
+                (corpus_id, username),
+            )
+        ]
         latest_by_value = {}
         for row in fact_rows:
             latest_by_value.setdefault((row["field"], row["value"]), row)
-        priority = {name: index for index, name in enumerate((
-            "mobile", "landline", "wechat_id", "explicit_need", "budget_cny",
-            "age", "grade", "available_time", "obstacle", "region",
-        ))}
+        priority = {
+            name: index
+            for index, name in enumerate(
+                (
+                    "mobile",
+                    "landline",
+                    "wechat_id",
+                    "explicit_need",
+                    "budget_cny",
+                    "age",
+                    "grade",
+                    "available_time",
+                    "obstacle",
+                    "region",
+                )
+            )
+        }
         selected_facts = sorted(
             latest_by_value.values(),
-            key=lambda row: (priority.get(row["field"], 99), -row["timestamp"], row["value"]),
+            key=lambda row: (
+                priority.get(row["field"], 99),
+                -row["timestamp"],
+                row["value"],
+            ),
         )[:max_evidence]
-        facts = [{key: row[key] for key in ("field", "value", "evidence_id", "extractor")} for row in selected_facts]
+        facts = [
+            {key: row[key] for key in ("field", "value", "evidence_id", "extractor")}
+            for row in selected_facts
+        ]
         fact_ids = {item["evidence_id"] for item in facts}
-        rows = [dict(row) for row in self.conn.execute(
-            """SELECT e.evidence_id,e.is_self,e.sender,e.timestamp,e.message_type,e.content
+        rows = [
+            dict(row)
+            for row in self.conn.execute(
+                """SELECT e.evidence_id,e.is_self,e.sender,e.timestamp,e.message_type,e.content
                FROM corpus_evidence ce JOIN evidence e ON e.evidence_id=ce.evidence_id
                WHERE ce.corpus_id=? AND e.username=? ORDER BY e.timestamp DESC,e.local_id DESC""",
-            (corpus_id, username),
-        )]
-        ordered = sorted(rows, key=lambda row: (row["evidence_id"] not in fact_ids, -row["timestamp"]))
+                (corpus_id, username),
+            )
+        ]
+        ordered = sorted(
+            rows,
+            key=lambda row: (row["evidence_id"] not in fact_ids, -row["timestamp"]),
+        )
         selected = []
         chars = 0
         for item in ordered:
             content = item["content"]
-            if item["evidence_id"] in fact_ids and (len(selected) >= max_evidence or chars + len(content) > max_chars):
+            if item["evidence_id"] in fact_ids and (
+                len(selected) >= max_evidence or chars + len(content) > max_chars
+            ):
                 raise RuntimeError("AI_CONTEXT_TOO_LARGE")
-            if selected and (len(selected) >= max_evidence or chars + len(content) > max_chars):
+            if selected and (
+                len(selected) >= max_evidence or chars + len(content) > max_chars
+            ):
                 continue
             item["content"] = content
             selected.append(item)
@@ -229,11 +421,33 @@ class AnalysisStore:
             raise RuntimeError("AI_CONTEXT_TOO_LARGE")
         return {"facts": facts, "evidence": selected}
 
-    def create_run(self, corpus_id: str, account_id: str, metadata: Dict, candidate_count: int, estimated_cost: Decimal) -> str:
+    def create_run(
+        self,
+        corpus_id: str,
+        account_id: str,
+        metadata: Dict,
+        candidate_count: int,
+        estimated_cost: Decimal,
+    ) -> str:
         run_id = "analysis_" + uuid.uuid4().hex
         self.conn.execute(
             "INSERT INTO analysis_runs VALUES(?,?,?,'staging',?,?,?,?,?,?,?,NULL,NULL,NULL,?,?)",
-            (run_id, corpus_id, account_id, metadata["model"], metadata["prompt_version"], metadata["prompt_sha256"], metadata["schema_version"], json.dumps(metadata["config_snapshot"], ensure_ascii=False, sort_keys=True), candidate_count, int(time.time()), str(estimated_cost), "0"),
+            (
+                run_id,
+                corpus_id,
+                account_id,
+                metadata["model"],
+                metadata["prompt_version"],
+                metadata["prompt_sha256"],
+                metadata["schema_version"],
+                json.dumps(
+                    metadata["config_snapshot"], ensure_ascii=False, sort_keys=True
+                ),
+                candidate_count,
+                int(time.time()),
+                str(estimated_cost),
+                "0",
+            ),
         )
         self.conn.commit()
         return run_id
@@ -247,41 +461,117 @@ class AnalysisStore:
         )
         self.conn.commit()
 
-    def add_result(self, run_id: str, username: str, display_name: str, judgment, facts: List[Dict]):
+    def add_result(
+        self, run_id: str, username: str, display_name: str, judgment, facts: List[Dict]
+    ):
         self.conn.execute(
             "INSERT INTO lead_results VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (run_id, username, display_name, judgment.intent_score, judgment.intent_band, judgment.recent_contact_ts, json.dumps(judgment.evidence_ids, ensure_ascii=False), json.dumps(judgment.obstacles, ensure_ascii=False), judgment.suggested_action, judgment.draft_text, json.dumps(judgment.draft_evidence_ids, ensure_ascii=False), json.dumps(facts, ensure_ascii=False, sort_keys=True)),
+            (
+                run_id,
+                username,
+                display_name,
+                judgment.intent_score,
+                judgment.intent_band,
+                judgment.recent_contact_ts,
+                json.dumps(judgment.evidence_ids, ensure_ascii=False),
+                json.dumps(judgment.obstacles, ensure_ascii=False),
+                judgment.suggested_action,
+                judgment.draft_text,
+                json.dumps(judgment.draft_evidence_ids, ensure_ascii=False),
+                json.dumps(facts, ensure_ascii=False, sort_keys=True),
+            ),
         )
         self.conn.commit()
 
-    def add_success(self, call_values: Dict, run_id: str, username: str, display_name: str, judgment, facts: List[Dict]):
+    def add_success(
+        self,
+        call_values: Dict,
+        run_id: str,
+        username: str,
+        display_name: str,
+        judgment,
+        facts: List[Dict],
+    ):
         call_tuple = tuple(call_values[key] for key in CALL_COLUMNS)
         result_tuple = (
-            run_id, username, display_name, judgment.intent_score, judgment.intent_band, judgment.recent_contact_ts,
-            json.dumps(judgment.evidence_ids, ensure_ascii=False), json.dumps(judgment.obstacles, ensure_ascii=False),
-            judgment.suggested_action, judgment.draft_text, json.dumps(judgment.draft_evidence_ids, ensure_ascii=False),
+            run_id,
+            username,
+            display_name,
+            judgment.intent_score,
+            judgment.intent_band,
+            judgment.recent_contact_ts,
+            json.dumps(judgment.evidence_ids, ensure_ascii=False),
+            json.dumps(judgment.obstacles, ensure_ascii=False),
+            judgment.suggested_action,
+            judgment.draft_text,
+            json.dumps(judgment.draft_evidence_ids, ensure_ascii=False),
             json.dumps(facts, ensure_ascii=False, sort_keys=True),
         )
         with self.conn:
             self.conn.execute(
-                "INSERT INTO ai_calls(%s) VALUES(%s)" % (",".join(CALL_COLUMNS), ",".join("?" for _ in CALL_COLUMNS)),
+                "INSERT INTO ai_calls(%s) VALUES(%s)"
+                % (",".join(CALL_COLUMNS), ",".join("?" for _ in CALL_COLUMNS)),
                 call_tuple,
             )
-            self.conn.execute("INSERT INTO lead_results VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", result_tuple)
+            self.conn.execute(
+                "INSERT INTO lead_results VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", result_tuple
+            )
 
     def fail_run(self, run_id: str, code: str, message: str):
         actual = sum(
-            (Decimal(row[0]) for row in self.conn.execute("SELECT actual_cost_usd FROM ai_calls WHERE run_id=? AND actual_cost_usd IS NOT NULL", (run_id,))),
+            (
+                Decimal(row[0])
+                for row in self.conn.execute(
+                    "SELECT actual_cost_usd FROM ai_calls WHERE run_id=? AND actual_cost_usd IS NOT NULL",
+                    (run_id,),
+                )
+            ),
             Decimal("0"),
         )
-        self.conn.execute("UPDATE analysis_runs SET status='failed',failure_code=?,failure_message=?,actual_cost_usd=? WHERE run_id=?", (code, message, str(actual), run_id))
+        self.conn.execute(
+            "UPDATE analysis_runs SET status='failed',failure_code=?,failure_message=?,actual_cost_usd=? WHERE run_id=?",
+            (code, message, str(actual), run_id),
+        )
         self.conn.commit()
 
     def publish_run(self, run_id: str, account_id: str):
         actual = sum(
-            (Decimal(row[0]) for row in self.conn.execute("SELECT actual_cost_usd FROM ai_calls WHERE run_id=? AND actual_cost_usd IS NOT NULL", (run_id,))),
+            (
+                Decimal(row[0])
+                for row in self.conn.execute(
+                    "SELECT actual_cost_usd FROM ai_calls WHERE run_id=? AND actual_cost_usd IS NOT NULL",
+                    (run_id,),
+                )
+            ),
             Decimal("0"),
         )
         with self.conn:
-            self.conn.execute("UPDATE analysis_runs SET status='old' WHERE account_id=? AND status='published'", (account_id,))
-            self.conn.execute("UPDATE analysis_runs SET status='published',published_at=?,actual_cost_usd=? WHERE run_id=?", (int(time.time()), str(actual), run_id))
+            run = self.conn.execute(
+                """SELECT ar.config_snapshot_json FROM analysis_runs ar
+                   JOIN corpus_runs cr ON cr.corpus_id=ar.corpus_id
+                   JOIN generations g ON g.generation_id=cr.generation_id
+                   WHERE ar.run_id=? AND ar.account_id=? AND ar.status='staging'
+                     AND cr.account_id=? AND cr.status='published'
+                     AND g.account_id=? AND g.status='published'""",
+                (run_id, account_id, account_id, account_id),
+            ).fetchone()
+            if run is None:
+                raise RuntimeError("ANALYSIS_SOURCE_SUPERSEDED")
+            recorded_config = json.loads(run["config_snapshot_json"])
+            recorded_config.pop("selector_version", None)
+            current_config = self.config()
+            current_config = {
+                key: value
+                for key, value in current_config.items()
+                if key not in ("setting_id", "updated_at")
+            }
+            if recorded_config != current_config:
+                raise RuntimeError("ANALYSIS_CONFIGURATION_SUPERSEDED")
+            self.conn.execute(
+                "UPDATE analysis_runs SET status='old' WHERE account_id=? AND status='published'",
+                (account_id,),
+            )
+            self.conn.execute(
+                "UPDATE analysis_runs SET status='published',published_at=?,actual_cost_usd=? WHERE run_id=?",
+                (int(time.time()), str(actual), run_id),
+            )

@@ -9,6 +9,13 @@ from .chatlog_client import ChatlogError
 
 
 HEX_KEY = re.compile(r"^[0-9a-fA-F]{64}$")
+ACTION_TIMEOUTS = {
+    "status": 20,
+    "list-accounts": 20,
+    "switch-account": 30,
+    "restart-and-get-key": 120,
+    "decompress-data": 300,
+}
 
 
 class ChatlogRuntime:
@@ -20,9 +27,22 @@ class ChatlogRuntime:
         if account_id:
             command.extend(["--history", account_id])
         try:
-            completed = subprocess.run(command, capture_output=True, text=True, check=False)
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=ACTION_TIMEOUTS[name],
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ChatlogError(
+                "CHATLOG_ACTION_TIMEOUT",
+                f"Chatlog action {name} exceeded {ACTION_TIMEOUTS[name]} seconds.",
+            ) from exc
         except OSError as exc:
-            raise ChatlogError("CHATLOG_BINARY_UNAVAILABLE", "Chatlog binary could not be executed.") from exc
+            raise ChatlogError(
+                "CHATLOG_BINARY_UNAVAILABLE", "Chatlog binary could not be executed."
+            ) from exc
 
         records = []
         for line in completed.stdout.splitlines():
@@ -33,10 +53,16 @@ class ChatlogRuntime:
                 records.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-        successes = [item for item in records if item.get("type") == "success" and item.get("action") == name]
+        successes = [
+            item
+            for item in records
+            if item.get("type") == "success" and item.get("action") == name
+        ]
         if completed.returncode != 0 or not successes:
             message = "Chatlog action %s failed." % name
-            failures = [item for item in records if item.get("type") in ("error", "failed")]
+            failures = [
+                item for item in records if item.get("type") in ("error", "failed")
+            ]
             if failures and failures[-1].get("message"):
                 message = str(failures[-1]["message"])
             raise ChatlogError("CHATLOG_ACTION_FAILED", message)
@@ -54,7 +80,9 @@ class ChatlogRuntime:
     def list_accounts(self) -> List[Dict]:
         data = self.action("list-accounts").get("data") or []
         if not isinstance(data, list):
-            raise ChatlogError("CHATLOG_ACCOUNTS_INVALID", "Chatlog account list is invalid.")
+            raise ChatlogError(
+                "CHATLOG_ACCOUNTS_INVALID", "Chatlog account list is invalid."
+            )
         return data
 
     def switch_account(self, account_id: str) -> Dict:
@@ -70,34 +98,72 @@ def primary_db_paths(db_map: Dict[str, Iterable[str]]) -> List[str]:
     return sorted(set(paths))
 
 
-def verify_runtime_account(status: Dict, account_id: str, db_map: Dict[str, Iterable[str]]) -> Dict:
+def verify_runtime_account(
+    status: Dict, account_id: str, db_map: Dict[str, Iterable[str]]
+) -> Dict:
     if status.get("account") != account_id:
-        raise ChatlogError("CHATLOG_ACCOUNT_MISMATCH", "Chatlog runtime account does not match the selected account.")
+        raise ChatlogError(
+            "CHATLOG_ACCOUNT_MISMATCH",
+            "Chatlog runtime account does not match the selected account.",
+        )
     if not HEX_KEY.fullmatch(str(status.get("data_key", ""))):
-        raise ChatlogError("DATABASE_KEY_MISSING", "Selected account does not have a valid database key.")
+        raise ChatlogError(
+            "DATABASE_KEY_MISSING",
+            "Selected account does not have a valid database key.",
+        )
 
-    work_dir = os.path.abspath(str(status.get("work_dir", "")))
-    if not work_dir or os.path.basename(work_dir) != account_id:
-        raise ChatlogError("DECRYPTED_WORKDIR_MISMATCH", "Decrypted work directory does not belong to the selected account.")
+    raw_work_dir = str(status.get("work_dir", ""))
+    work_dir = os.path.realpath(raw_work_dir)
+    if (
+        not raw_work_dir
+        or not os.path.isabs(raw_work_dir)
+        or os.path.basename(work_dir) != account_id
+    ):
+        raise ChatlogError(
+            "DECRYPTED_WORKDIR_MISMATCH",
+            "Decrypted work directory does not belong to the selected account.",
+        )
+    storage_root = os.path.realpath(os.path.join(work_dir, "db_storage"))
 
     verified = []
     for encrypted_path in primary_db_paths(db_map):
-        marker = "/db_storage/"
+        marker = f"/xwechat_files/{account_id}/db_storage/"
         if marker not in encrypted_path:
-            raise ChatlogError("DATABASE_PATH_INVALID", "Chatlog returned a database path outside db_storage.")
+            raise ChatlogError(
+                "DATABASE_ACCOUNT_PATH_MISMATCH",
+                "Chatlog returned a primary database path for a different account.",
+            )
         relative = encrypted_path.split(marker, 1)[1]
-        decrypted_path = os.path.join(work_dir, "db_storage", relative)
+        if not relative or os.path.isabs(relative):
+            raise ChatlogError(
+                "DATABASE_PATH_INVALID", "Chatlog returned an invalid database path."
+            )
+        decrypted_path = os.path.realpath(os.path.join(storage_root, relative))
+        if os.path.commonpath([storage_root, decrypted_path]) != storage_root:
+            raise ChatlogError(
+                "DATABASE_PATH_INVALID",
+                "Chatlog returned a database path escaping db_storage.",
+            )
         if not os.path.isfile(decrypted_path):
-            raise ChatlogError("DECRYPTED_DATABASE_MISSING", "Decrypted database is missing: %s" % relative)
+            raise ChatlogError(
+                "DECRYPTED_DATABASE_MISSING",
+                "Decrypted database is missing: %s" % relative,
+            )
         try:
             uri = "file:%s?mode=ro&immutable=1" % decrypted_path
             connection = sqlite3.connect(uri, uri=True)
             connection.execute("PRAGMA schema_version").fetchone()
             connection.close()
         except sqlite3.Error as exc:
-            raise ChatlogError("DECRYPTED_DATABASE_INVALID", "Decrypted database is unreadable: %s" % relative) from exc
+            raise ChatlogError(
+                "DECRYPTED_DATABASE_INVALID",
+                "Decrypted database is unreadable: %s" % relative,
+            ) from exc
         verified.append(relative)
 
     if not verified:
-        raise ChatlogError("PRIMARY_DATABASES_EMPTY", "No primary session, contact, or message databases were found.")
+        raise ChatlogError(
+            "PRIMARY_DATABASES_EMPTY",
+            "No primary session, contact, or message databases were found.",
+        )
     return {"work_dir": work_dir, "verified_databases": verified}

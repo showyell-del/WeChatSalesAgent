@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CHATLOG_BIN="./chatlog_2f54920_darwin_arm64/chatlog-darwin-arm64"
+CHATLOG_BIN="./chatlog/chatlog-darwin-arm64"
 
 json_event() {
   local step="$1"
@@ -26,7 +26,8 @@ case "${1:-}" in
     if "$CHATLOG_BIN" http list >/dev/null 2>&1; then
       json_event "chatlog_http" "passed" "CHATLOG_HTTP_LIST_CALLABLE" "Chatlog HTTP endpoint list is callable."
     else
-      json_event "chatlog_http" "blocked" "CHATLOG_SERVICE_UNAVAILABLE" "Chatlog HTTP service is not available."
+      json_event "chatlog_http" "failed" "CHATLOG_SERVICE_UNAVAILABLE" "Chatlog HTTP service is not available."
+      exit 1
     fi
     ;;
   *)

@@ -1,6 +1,15 @@
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 
 IntentBand = Literal["高意向", "待激活", "长期培育", "排除"]
@@ -27,7 +36,7 @@ class LeadJudgment(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def score_band_and_draft(self):
+    def score_matches_band(self):
         if self.intent_score >= 80:
             expected = "高意向"
         elif self.intent_score >= 55:
@@ -38,11 +47,42 @@ class LeadJudgment(BaseModel):
             expected = "排除"
         if self.intent_band != expected:
             raise ValueError("intent band does not match score thresholds")
-        actionable = self.intent_band in ("高意向", "待激活")
-        if actionable and (not self.draft_text or not self.draft_evidence_ids):
-            raise ValueError("actionable lead requires a draft and draft evidence")
-        if not actionable and (self.draft_text is not None or self.draft_evidence_ids):
-            raise ValueError("non-actionable lead must not contain a draft")
+        return self
+
+
+class ProviderLeadJudgment(BaseModel):
+    """DeepSeek may judge evidence, but it may not author outbound copy."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    customer_id: StrictStr = Field(min_length=1)
+    intent_score: StrictInt = Field(ge=0, le=100)
+    intent_band: IntentBand
+    recent_contact_ts: StrictInt = Field(gt=0)
+    evidence_ids: List[StrictStr] = Field(min_length=1, max_length=12)
+    obstacles: List[StrictStr] = Field(max_length=5)
+    suggested_action: StrictStr = Field(min_length=1, max_length=400)
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def unique_ids(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError("evidence IDs must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def score_matches_band(self):
+        expected = (
+            "高意向"
+            if self.intent_score >= 80
+            else "待激活"
+            if self.intent_score >= 55
+            else "长期培育"
+            if self.intent_score >= 30
+            else "排除"
+        )
+        if self.intent_band != expected:
+            raise ValueError("intent band does not match score thresholds")
         return self
 
 
@@ -57,7 +97,10 @@ class ProviderUsage(BaseModel):
 
     @model_validator(mode="after")
     def totals_match(self):
-        if self.prompt_tokens != self.prompt_cache_hit_tokens + self.prompt_cache_miss_tokens:
+        if (
+            self.prompt_tokens
+            != self.prompt_cache_hit_tokens + self.prompt_cache_miss_tokens
+        ):
             raise ValueError("prompt token breakdown mismatch")
         if self.total_tokens != self.prompt_tokens + self.completion_tokens:
             raise ValueError("total token mismatch")
@@ -78,3 +121,20 @@ class BusinessProfile(BaseModel):
     lead_keywords: List[StrictStr] = Field(min_length=1, max_length=100)
     minor_data_approved: StrictBool = False
     external_api_data_transfer_approved: StrictBool = False
+
+    @field_validator(
+        "products",
+        "prices",
+        "offers",
+        "allowed_claims",
+        "forbidden_claims",
+        "lead_keywords",
+    )
+    @classmethod
+    def normalized_nonempty_unique_values(cls, value):
+        normalized = [item.strip() for item in value]
+        if any(not item for item in normalized):
+            raise ValueError("business truth list values must not be blank")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("business truth list values must be unique")
+        return normalized

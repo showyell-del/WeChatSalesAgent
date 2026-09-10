@@ -7,4 +7,3 @@ __pycache__/
 dist/
 build/
 runtime/
-.planning/spikes/001-native-file-send/native-file-spike-*.txt

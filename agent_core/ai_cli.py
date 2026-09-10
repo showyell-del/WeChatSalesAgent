@@ -15,18 +15,37 @@ from .keychain import KeychainStore
 
 
 DEEPSEEK_KEYCHAIN_SERVICE = "com.wechat-sales-agent.deepseek-api-key"
+MAX_OUTPUT_TOKENS = 8192
+
+
+def validate_limit(value: int) -> None:
+    if value < 0:
+        raise AnalysisError("AI_LIMIT_INVALID", "Analysis limit cannot be negative.")
 
 
 def command_set_key(args):
     try:
         key = sys.stdin.read().strip()
         if not key:
-            raise AnalysisError("DEEPSEEK_API_KEY_EMPTY", "DeepSeek API Key cannot be empty.")
+            raise AnalysisError(
+                "DEEPSEEK_API_KEY_EMPTY", "DeepSeek API Key cannot be empty."
+            )
         KeychainStore(DEEPSEEK_KEYCHAIN_SERVICE).put_and_verify("default", key)
-        emit(event("ai_key", "passed", "DEEPSEEK_API_KEY_SAVED", "DeepSeek API Key saved to macOS Keychain."))
+        emit(
+            event(
+                "ai_key",
+                "passed",
+                "DEEPSEEK_API_KEY_SAVED",
+                "DeepSeek API Key saved to macOS Keychain.",
+            )
+        )
         return 0
     except (RuntimeError, AnalysisError) as exc:
-        code = exc.code if isinstance(exc, AnalysisError) else "DEEPSEEK_API_KEY_SAVE_FAILED"
+        code = (
+            exc.code
+            if isinstance(exc, AnalysisError)
+            else "DEEPSEEK_API_KEY_SAVE_FAILED"
+        )
         message = exc.message if isinstance(exc, AnalysisError) else str(exc)
         emit(event("ai_key", "failed", code, message))
         return 1
@@ -38,13 +57,23 @@ def command_approve_transfer(args):
         try:
             config = store.config()
             profile = BusinessProfile.model_validate(config["business_profile"])
-            updated = profile.model_copy(update={"external_api_data_transfer_approved": True})
+            updated = profile.model_copy(
+                update={"external_api_data_transfer_approved": True}
+            )
             store.update_business_profile(updated.model_dump_json())
         finally:
             store.close()
-        emit(event("ai_config", "passed", "AI_EXTERNAL_TRANSFER_APPROVED", "External DeepSeek personal-data transfer approved in business configuration.", {
-            "minor_data_approved": str(updated.minor_data_approved).lower(),
-        }))
+        emit(
+            event(
+                "ai_config",
+                "passed",
+                "AI_EXTERNAL_TRANSFER_APPROVED",
+                "External DeepSeek personal-data transfer approved in business configuration.",
+                {
+                    "minor_data_approved": str(updated.minor_data_approved).lower(),
+                },
+            )
+        )
         return 0
     except (RuntimeError, ValidationError) as exc:
         emit(event("ai_config", "failed", "AI_TRANSFER_APPROVAL_FAILED", str(exc)))
@@ -57,14 +86,18 @@ def command_configure(args):
             business = BusinessProfile.model_validate(json.load(handle))
         if not args.base_url.startswith("https://"):
             raise ValueError("DeepSeek Base URL must use HTTPS.")
-        if not args.model.strip() or args.max_tokens <= 0:
+        if not args.model.strip() or not 1 <= args.max_tokens <= MAX_OUTPUT_TOKENS:
             raise ValueError("DeepSeek model and max_tokens must be valid.")
-        prices = (Decimal(args.cache_hit_price), Decimal(args.cache_miss_price), Decimal(args.output_price))
-        if any(price < 0 for price in prices):
-            raise ValueError("DeepSeek token prices cannot be negative.")
+        prices = (
+            Decimal(args.cache_hit_price),
+            Decimal(args.cache_miss_price),
+            Decimal(args.output_price),
+        )
+        if any(not price.is_finite() or price < 0 for price in prices):
+            raise ValueError("DeepSeek token prices must be finite and non-negative.")
         settings = {
             "base_url": args.base_url.rstrip("/"),
-            "model": args.model,
+            "model": args.model.strip(),
             "max_tokens": args.max_tokens,
             "cache_hit_usd_per_million": str(prices[0]),
             "cache_miss_usd_per_million": str(prices[1]),
@@ -75,12 +108,23 @@ def command_configure(args):
             KeychainStore(DEEPSEEK_KEYCHAIN_SERVICE).put_and_verify("default", key)
         store = AnalysisStore(args.db)
         try:
-            store.configure(settings, business.model_dump_json())
+            analysis_invalidated = store.configure(settings, business.model_dump_json())
         finally:
             store.close()
-        emit(event("ai_config", "passed", "AI_CONFIGURATION_SAVED", "DeepSeek and business configuration saved.", {
-            "base_url": settings["base_url"], "model": settings["model"], "api_key_updated": str(bool(key)).lower(),
-        }))
+        emit(
+            event(
+                "ai_config",
+                "passed",
+                "AI_CONFIGURATION_SAVED",
+                "DeepSeek and business configuration saved.",
+                {
+                    "base_url": settings["base_url"],
+                    "model": settings["model"],
+                    "api_key_updated": str(bool(key)).lower(),
+                    "analysis_invalidated": str(analysis_invalidated).lower(),
+                },
+            )
+        )
         return 0
     except (OSError, ValueError, ValidationError, RuntimeError) as exc:
         emit(event("ai_config", "failed", "AI_CONFIGURATION_INVALID", str(exc)))
@@ -88,35 +132,67 @@ def command_configure(args):
 
 
 def command_estimate(args):
-    store = AnalysisStore(args.db)
+    store = None
     try:
+        validate_limit(args.limit)
+        store = AnalysisStore(args.db)
         result = estimate_run(store, args.account_id, args.limit)
-        emit(event("ai_estimate", "passed", "AI_COST_ESTIMATED", "Candidate count and conservative token cost estimated.", {
-            "candidates": str(len(result["candidates"])),
-            "estimated_input_tokens": str(result["estimated_input_tokens"]),
-            "estimated_output_tokens": str(result["estimated_output_tokens"]),
-            "estimated_cost_usd": str(result["estimated_cost_usd"]),
-            "privacy_excluded": str(result["privacy_excluded"]),
-            "method": "utf8_bytes_div_3_plus_configured_max_output",
-        }))
+        emit(
+            event(
+                "ai_estimate",
+                "passed",
+                "AI_COST_ESTIMATED",
+                "Candidate count and conservative token cost estimated.",
+                {
+                    "candidates": str(len(result["candidates"])),
+                    "estimated_input_tokens": str(result["estimated_input_tokens"]),
+                    "estimated_output_tokens": str(result["estimated_output_tokens"]),
+                    "estimated_cost_usd": str(result["estimated_cost_usd"]),
+                    "privacy_excluded": str(result["privacy_excluded"]),
+                    "method": "utf8_bytes_div_3_plus_configured_max_output",
+                },
+            )
+        )
         return 0
     except Exception as exc:
         emit(event("ai_estimate", "failed", "AI_ESTIMATE_FAILED", str(exc)))
         return 1
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
 
 def command_run(args):
     try:
+        validate_limit(args.limit)
+        if args.timeout <= 0:
+            raise AnalysisError(
+                "AI_TIMEOUT_INVALID", "Analysis timeout must be positive."
+            )
         try:
             api_key = KeychainStore(DEEPSEEK_KEYCHAIN_SERVICE).get("default")
         except ChatlogError as exc:
-            raise AnalysisError("DEEPSEEK_API_KEY_MISSING", "DeepSeek API Key is missing from macOS Keychain.") from exc
+            raise AnalysisError(
+                "DEEPSEEK_API_KEY_MISSING",
+                "DeepSeek API Key is missing from macOS Keychain.",
+            ) from exc
         if not api_key:
-            raise AnalysisError("DEEPSEEK_API_KEY_MISSING", "DeepSeek API Key is missing from macOS Keychain.")
-        result = run_analysis(args.db, args.account_id, api_key, args.limit, args.timeout)
-        emit(event("ai_analysis", "passed", "AI_ANALYSIS_PUBLISHED", "Strict evidence-backed lead analysis published.", result))
+            raise AnalysisError(
+                "DEEPSEEK_API_KEY_MISSING",
+                "DeepSeek API Key is missing from macOS Keychain.",
+            )
+        result = run_analysis(
+            args.db, args.account_id, api_key, args.limit, args.timeout
+        )
+        emit(
+            event(
+                "ai_analysis",
+                "passed",
+                "AI_ANALYSIS_PUBLISHED",
+                "Strict evidence-backed lead analysis published.",
+                result,
+            )
+        )
         return 0
     except (RuntimeError, AnalysisError) as exc:
         code = exc.code if isinstance(exc, AnalysisError) else "AI_ANALYSIS_FAILED"
@@ -130,18 +206,55 @@ def command_status(args):
         store = AnalysisStore(args.db)
         try:
             config = store.config()
-            rows = [dict(row) for row in store.conn.execute(
-                "SELECT run_id,status,model,candidate_count,estimated_cost_usd,actual_cost_usd,published_at,failure_code FROM analysis_runs ORDER BY started_at DESC LIMIT 10"
-            )]
+            rows = [
+                dict(row)
+                for row in store.conn.execute(
+                    "SELECT run_id,status,model,candidate_count,estimated_cost_usd,actual_cost_usd,published_at,failure_code FROM analysis_runs ORDER BY started_at DESC LIMIT 10"
+                )
+            ]
         finally:
             store.close()
-        emit(event("ai_status", "passed", "AI_STATUS_READ", "DeepSeek configuration and analysis state loaded.", {
-            "model": config["model"], "configured": "true", "runs": str(len(rows)),
-            "published_runs": str(sum(1 for row in rows if row["status"] == "published")),
-        }))
+        emit(
+            event(
+                "ai_status",
+                "passed",
+                "AI_STATUS_READ",
+                "DeepSeek configuration and analysis state loaded.",
+                {
+                    "model": config["model"],
+                    "configured": "true",
+                    "runs": str(len(rows)),
+                    "published_runs": str(
+                        sum(1 for row in rows if row["status"] == "published")
+                    ),
+                },
+            )
+        )
         return 0
     except Exception as exc:
         emit(event("ai_status", "failed", "AI_STATUS_FAILED", str(exc)))
+        return 1
+
+
+def command_profile(args):
+    try:
+        store = AnalysisStore(args.db)
+        try:
+            profile = BusinessProfile.model_validate(store.config()["business_profile"])
+        finally:
+            store.close()
+        emit(
+            event(
+                "ai_profile",
+                "passed",
+                "AI_BUSINESS_PROFILE_READ",
+                "Business profile loaded.",
+            )
+        )
+        print(profile.model_dump_json())
+        return 0
+    except Exception as exc:
+        emit(event("ai_profile", "failed", "AI_BUSINESS_PROFILE_READ_FAILED", str(exc)))
         return 1
 
 
@@ -171,6 +284,7 @@ def build_parser():
     run.add_argument("--timeout", type=int, default=120)
     run.set_defaults(func=command_run)
     sub.add_parser("status").set_defaults(func=command_status)
+    sub.add_parser("profile").set_defaults(func=command_profile)
     return parser
 
 

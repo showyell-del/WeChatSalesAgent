@@ -1,114 +1,81 @@
 # Project Agent Notes
 
-## Chatlog Alpha
+## 产品边界
 
-- `runtime/agent_state.sqlite3` is development-only local state. It must never be presented as a merchant's customer list, used to validate a merchant campaign, or selected as a send target. A deployed merchant starts with an independent local state database tied only to the WeChat account they explicitly connect.
-- The project contains the macOS Apple Silicon Chatlog Alpha app at `chatlog_2f54920_darwin_arm64/`; it is an application, not a Codex skill.
-- Verified commands: `./chatlog_2f54920_darwin_arm64/chatlog-darwin-arm64 --help`, `key --help`, `http --help`, and `action --help` all run successfully.
-- Normal local flow: run `start-chatlog.command` (or the binary), use the TUI to select the account, obtain database keys, decrypt data, then start the HTTP service. Browse locally at `http://127.0.0.1:5030/`.
-- On macOS its database-key extraction requires `frida-tools` in the current user's Python environment and requires SIP to be disabled; do not run Chatlog, Python/Frida, or WeChat with `sudo`.
-- The system `python3` is 3.9.6. The current Frida 17.x package is incompatible because it imports `typing.NotRequired`, which Python 3.9 does not provide. Use `frida==16.7.19` for this interpreter.
-- Verified after installation: `python3` imports Frida 16.7.19 and can attach to and detach from the running WeChat main process. The next `chatlog key` run will restart WeChat to capture and validate the database key.
-- Verified Chatlog data API: `GET /api/v1/sessions?format=json&limit=5000` returns the full session list; filter `is_group=false` and exclude official/service usernames for human private-chat candidates.
-- Verified private history API: `GET /api/v1/history?chat=<username>&time=<date-range>&limit=<n>&offset=<n>&format=json` returns message sender, timestamp, content, type, and media fields. Use this API for batch lead analysis rather than raw database search.
-- For sales-lead screening, preserve evidence excerpts for every score, extract contact details deterministically, and output only actionable private-chat leads. Do not treat a score as a statistical purchase probability unless it has been calibrated against real conversion labels.
+- 产品是 macOS Apple Silicon 原生 AppKit 桌面 App，不是网页、Codex Skill 或脚本集。
+- 当前只保留三条完整主链：微信私聊同步、DeepSeek 线索分析、客户工作台与 Excel 导出。
+- 应用不得向微信发送文本、图片、视频或文件；不得保留发送按钮、批次状态库、发送 CLI、守护进程、NativeWorker、Frida 发送脚本或微信 profile。
+- 不得用剪贴板、键鼠模拟、系统分享、Hermes 或其他通道代替微信发送。
+- 会话候选仅表示进入 DeepSeek 筛选的双向私聊，模型分析前不得称为客户或线索。
 
-## Native sender extraction
+## 当前目录真相
 
-- The upstream native sender at commit `2f54920d` supports only `text` and `image`; its request normalization rejects other message types.
-- Reusable sender components are `internal/wechat/send/model.go`, `runner_darwin.go`, `assets/native_send_once.py`, `assets/native_send_image_once.py`, `assets/native/single_send_agent.js`, and `assets/native/image_send_agent.js`. Reuse the serialized job/command/release semantics from `internal/chatlog/http/send_debug.go`, not its debug HTTP UI.
-- Video and arbitrary-file sending do not have a native WeChat implementation. The Hermes bridge methods are an external adapter and are not a replacement. Each new native type requires its own upload entry and callbacks, protobuf/task payload, CDN metadata mapping, serializer compatibility, ack-safe cleanup, and live verification.
-- Production sending must fail closed on an exact WeChat version and dylib hash, own one serialized native session, reject unsupported types explicitly, and verify cleanup without retry or compatibility fallbacks.
-- Local WeChat 4.1.11.55 verified profile facts: build `269111`; full `wechat.dylib` SHA-256 `c2a4794b343625a8013752095e76bc688acd42d48f30001a255620db2fc542a9`; arm64 slice SHA-256 `da53625065d283d748f959627f5e4d724eb786f2911f49c91a72cc12f17d30f7`.
-- Verified 4.1.11.55 send offsets: `MMStartTask=0x5121478`, default manager wrapper `0x51173d0`, `Req2Buf=0x3e5930c`, serializer hook `0x3e5938c`, post-serializer `0x3e59394`, callable `AutoBufferWrite=0x3e7ff0c`, `Buf2Resp=0x3e7eaf0`. `0x3e7ff18` is inside `AutoBufferWrite` after its prologue and must not be used as a `NativeFunction` entry.
-- Native sender objects that WeChat may hold asynchronously must be allocated from native memory (`calloc`/`mmap`), not ordinary Frida heap. Frida heap objects allowed `MMStartTask` to return but produced bad `x1` state and dirty unload behavior.
-- The `wechat_chatter` simple file path (`uploadappattach` chunks then `sendappmsg` appmsg type 6) is not a valid 4.1.11.55 first implementation path in this environment: both `uploadappattach` and direct `sendappmsg` file tasks reached `MMStartTask` with the correct task id but never reached `Req2Buf` or `Buf2Resp`.
-- After a native send attempt times out, `script.unload()` and `session.detach()` can also time out; the clean recovery path is controlled WeChat restart plus targeted cleanup of only the current Frida helper. Do not leave a hot-unload-only lifecycle for file/video send experiments.
-- 2026-07-24 text-send spike narrowed the 4.1.11.55 path: cloning a real 0x1a0 StartTask payload and rebasing internal pointers lets a synthetic `newsendmsg` task enter `Req2Buf`; using callable `AutoBufferWrite=0x3e7ff0c` reaches `protobuf_written`. `MMStartTask return_value=1` is still not success; success still requires `Buf2Resp` with `BaseResponse.ret=0`.
-- The fake `sendObject` is a libc++ tree node, not a free-form 0x30 blob. Offsets `0x00/0x08/0x10` are left/right/parent, `0x18` is the color byte, `0x20` is the task id, and `0x28` points to the message object. Writing `0x18` as a 64-bit count corrupts tree removal.
-- Runtime disassembly verified the correct 4.1.11.55 `Req2Buf` path: if the task id is not already in the tree, WeChat itself allocates a valid 0x30 node at `0x3e594a8`, inserts/rebalances it, then reads `node+0x28` at `0x3e597b0`. Patch only this real node's message pointer; do not replace `x19/x24+0x60` with a synthetic node.
-- `preCallback=0x3e5ac58` throws before `messageCleanup` when a fake message has no callback object at `x20+0x98`. For the synthetic message path, jump fake-message post-callback cleanup to `messageCleanup=0x3e5acac` with `x20=0`; otherwise `mars_boost::bad_function_call` is expected.
-- Native send tests require WeChat to be actually logged into the chat workspace. A frontmost login/QR window can show a WeChat PID but produces no `StartTask` context; the agent must report that as `WECHAT_NOT_LOGGED_IN`/context missing rather than treating it as a hook failure.
-- 2026-07-24 local WeChat recovery path: the app may first show a multi-step safe-mode page after hook experiments; clicking through without uploading logs ends at the QR login window (`扫码登录` plus `仅传输文件`). This is still not a normal chat workspace and cannot certify native sends.
-- 2026-07-28 restored live-send preconditions: WeChat is in the normal chat workspace; `native-worker/phase0_worker.py profile-gate` passed the exact `4.1.11.55 / 269111` disk profile and both dylib hashes, and `attach-smoke` attached, loaded, unloaded, and detached from the running PID. Use `filehelper` only for the first bounded message-type certification, never a customer conversation.
-- Upstream `teest114514/chatlog_alpha` source commit `93555052dcd2c88cb4ef3e0b6a548c4ca2d632f0` was rechecked on 2026-07-28. Its full text-agent attach smoke loaded the exact offsets, detached cleanly with zero remaining Frida helpers, and left WeChat healthy, but its own executable path still declares that a real text send can freeze WeChat. Treat injection/attach success as infrastructure evidence only, never as a certified production send capability.
-- If WeChat exits while the native send spike is waiting for a real `StartTask` context, report `WECHAT_PROCESS_EXITED`; do not continue into protobuf/task construction and do not reinterpret it as protocol failure.
-- macOS UI automation was checked as an alternate primary send adapter. Plain AppleScript can activate WeChat but `System Events` lacks Accessibility permission in this runtime; `computer-use` can read screenshots and dismiss WeChat safe-mode pages, but coordinate click on WeChat returns `AXError.notImplemented`. Do not plan a UI-send adapter unless the app owns Accessibility permission and a verified click/type/file-drop path.
+- `app/Phase0App/main.m`：唯一桌面 UI，负责首次连接、按需 DeepSeek Agent 查询、客户表和 Excel 导出。
+- `agent_core/`：同步、证据语料、AI 分析和工作台读模型；不包含发送运行时。
+- `chatlog/chatlog-darwin-arm64`：App 内置的 Chatlog Alpha Apple Silicon 依赖；许可证保留在 `chatlog/LICENSE`。
+- `dist/WeChatSalesAgent-MVP-macOS-arm64.dmg`：唯一对外交付物；验证后必须删除中间 `.app`。
+- 本机业务数据库默认位于 `~/Library/Application Support/WeChatSalesAgent/agent_state.sqlite3`，不属于项目源码。
 
-## Phase 0 local delivery facts
+## 数据与 DeepSeek 链路
 
-- Verified local toolchain on 2026-07-23: `/usr/bin/clang` can compile an Objective-C/AppKit native app; `python3` is 3.9.6; `python3` imports Frida 16.7.19.
-- Swift is not currently usable for Phase 0 on this machine: SwiftPM manifest linking fails against PackageDescription, and direct `swiftc` fails because the compiler patch version does not match the installed macOS SDK Swift interfaces. Do not use `swift test` or `swift build` until the Command Line Tools/Xcode toolchain is repaired.
-- `codesign`, `notarytool`, and `stapler` are available through Command Line Tools, but `security find-identity -v -p codesigning` reports `0 valid identities found`; Developer ID signing/notarization must fail closed until a valid identity and credentials are installed.
-- `go` is not currently available on PATH and was not found at `/opt/homebrew/bin/go` or `/usr/local/go/bin/go`; Phase 0 plans must not require a Go build step.
-- Latest process probe did not show a running WeChat main process; Phase 0 profile checks must report `WECHAT_NOT_RUNNING` distinctly from profile mismatch and worker failures.
-- Verified WeChat disk dylib location on 2026-07-23: `/Applications/WeChat.app/Contents/Resources/wechat.dylib`; full SHA-256 and arm64 slice SHA-256 match the certified values above.
-- Source reference snapshots are still available at `/tmp/chatlog-alpha-spike.WWc9fK/repo` commit `2f54920d4aa78e1812819f77bb59a5e380c6f0ec` and `/tmp/wechat-chatter-spike` commit `49114827bc83f8381eb638e8a56f3f0305fc1a1c`.
+- 项目内 Chatlog 默认路径统一为 `chatlog/chatlog-darwin-arm64`。修改目录时同时检查 `agent_core/sync_cli.py`、`scripts/build_phase0_app.sh` 和 `scripts/phase0_chatlog_smoke.sh`。
+- App 通过 Chatlog `action start-http` 启动本机服务，通过 `/api/v1/db`、`/api/v1/sessions` 和分方向 `/api/v1/history` 取得完整数据。
+- 证据 ID 绑定账号、数据代、对话、本地消息 ID、方向、发件人、时间和内容 SHA-256；确定性联系方式只从客户方证据提取。
+- 用户发送 Agent 指令后，DeepSeek 先生成包含时间范围和概念组的检索计划；本机按时间条件全量召回候选，再分批完成第一轮语义判断和不携带首轮结论的独立覆盖审计。所有模型请求必须使用 OpenAI-compatible `/chat/completions` 的 JSON Output。
+- 空内容、非 JSON、无效关键词、未知客户 ID 或证据越界均终止失败，不修复、不重试、不换模型。
+- API Key 保存在 macOS Keychain。没有“业务设置”、传输批准、成本估算或批量分析前置流程；用户发送本次问题即是本次按需分析的唯一触发点。
+- 客户 Agent 默认模型为 `deepseek-v4-flash`。模型选择保存在本机 `agent_settings`，点击“模型连接”保存 Key 后必须调用 DeepSeek `GET /models` 刷新该账号完整可用模型列表；不可把模型写死为旧版 `deepseek-chat` 或 `deepseek-reasoner`。
 
-## Phase 0 verified commands
+## 已禁止的原生发送路径
 
-- `scripts/build_phase0_app.sh` builds `dist/phase0/WeChatSalesAgent.app`, ad-hoc signs it, and reports `DEVELOPER_ID_IDENTITY_MISSING` when no Developer ID identity is installed.
-- `dist/phase0/WeChatSalesAgent.app/Contents/MacOS/WeChatSalesAgent --smoke` emits `PHASE0_APP_LAUNCHED`.
-- `python3 native-worker/phase0_worker.py version` reports Frida `16.7.19`.
-- `python3 native-worker/phase0_worker.py profile-gate` reports `WECHAT_NOT_RUNNING` when WeChat is not running; with WeChat running it must validate build `269111`, full dylib SHA-256, and arm64 slice SHA-256 before native operations.
-- `scripts/phase0_chatlog_smoke.sh --help-smoke` reports `CHATLOG_HELP_CALLABLE`.
-- `scripts/phase0_validate.sh --quick` passes the AppKit build/sign and no-fallback scan.
-- `scripts/phase0_validate.sh --full` passes local automated gates and may include explicit blocked gates for missing Developer ID identity, WeChat not running, and manual `filehelper` text-send smoke.
-- `DEVELOPER_ID_IDENTITY_MISSING`, `WECHAT_NOT_RUNNING`, and `TEXT_SEND_SMOKE_MANUAL_REQUIRED` are not fallback success states; they are terminal gates that must be resolved before claiming commercial Phase 0 completion.
+- 2026-08-01 微信 `4.1.12.29/269341` 实机证明：调用内部 `StartTask` 并注入 Frida 构造的伪 C++ 对象/vtable 会在 `mars::stn` 线程触发 `EXC_BAD_ACCESS`，崩溃报告明确为 `possible pointer authentication failure`。
+- 这是 Apple arm64e 指针认证边界，不是可通过更换 offset、延长超时或增加清理分支修复的普通 profile 问题。
+- 崩溃证据：`~/Library/Logs/DiagnosticReports/WeChat-2026-08-01-165733.ips`。
+- 验证结论是彻底删除原生发送，不得恢复旧 sender/profile，不得再对微信做发送 attach 实验。
+- Frida 16.7.19 仅作为 Chatlog 密钥提取的内置运行时依赖；本 App 自身不 attach 微信。
 
-## Phase 1 verified account and sync path
+## 构建与验证飞轮
 
-- `scripts/phase1_sync.sh accounts` reads Chatlog's running and historical accounts through the JSON Lines action interface without exposing the database key.
-- `scripts/phase1_sync.sh switch --account-id wxid_3prysbeqgvci22_9f8d` verified historical-account selection for the development account only.
-- `scripts/phase1_sync.sh connect --account-id wxid_3prysbeqgvci22_9f8d` verifies a 64-hex database key, stores and reads it back from macOS Keychain service `com.wechat-sales-agent.database-key`, runs first/incremental decrypt, and validates 11 primary session/contact/message databases as readable SQLite files.
-- Chatlog's `security add-generic-password -w` prompt form does not read a secret from piped stdin in this non-interactive runtime; it created an empty item and was removed. The verified CLI form passes the value explicitly. Replace that transport with Security.framework when the native desktop target owns Keychain access.
-- `scripts/phase1_sync.sh sync --account-id wxid_3prysbeqgvci22_9f8d --limit 5000` verified an account-bound staged generation containing 1,202 sessions. Publishing a later generation atomically marks the prior published generation `old`; a failed staging generation leaves the prior published generation unchanged.
-- `scripts/phase1_validate.sh` runs unit tests, Python compilation, Chatlog health, account discovery, account switch, key/decrypted-database verification, live decrypt/sync, and state readback. Runtime state is written only to ignored `runtime/agent_state.sqlite3`.
+- 系统 Python 是 `3.9.6`，Frida 锁定 `16.7.19`，Pydantic 锁定 `2.12.5`，Node 锁定 `24.14.0`，`@oai/artifact-tool` 锁定 `2.8.36`。
+- `scripts/build_phase0_app.sh` 内置 Python、Chatlog、Frida、Pydantic、Node 和 artifact-tool；不创建或复制 `NativeWorker`。
+- Chatlog 密钥提取会查找 `python3` 并导入 `frida`。App 必须把内置 `PythonRuntime/bin` 放在 `PATH` 首位，并传入完整 `PYTHONHOME`/`PYTHONPATH`。
+- 必跑门禁：
+  - `python3 -m unittest discover -s Tests -p 'test_*.py'`
+  - `python3 -m compileall -q agent_core`
+  - `node --check scripts/build_lead_workbook.mjs`
+  - `bash -n scripts/*.sh`
+  - `clang -fsyntax-only -fobjc-arc app/Phase0App/main.m`
+  - `scripts/phase0_validate.sh --quick`
+  - `scripts/phase0_validate.sh --no-fallback-scan`
+  - `scripts/phase4_validate.sh`
+  - `git diff --check`
+- 回归测试必须断言发送模块、NativeWorker、profiles、Phase 6 和发送 UI 均不存在。
+- 发布 DMG 必须只读挂载验证签名、内置依赖、Chatlog 许可证和构建清单；成功后删除中间 `.app`。
 
-## Phase 2 verified private-chat corpus path
+## 当前验证结果
 
-- Use `since` and `until` epoch seconds for `/api/v1/history`; the `time=YYYY-MM-DD~YYYY-MM-DD` form is not a verified range for this build.
-- Read each conversation twice with `is_self=false` and `is_self=true`. The API returns an accurate direction-specific `total_count` when that filter is present; page until the fetched count equals it. Do not infer sender direction from display names.
-- `scripts/phase2_corpus.sh --account-id wxid_3prysbeqgvci22_9f8d --days 183 --page-size 500` completed a full, non-sampled development-data run over 1,202 sessions: 244 bidirectional private conversations were eligible for screening, 958 were excluded, and 47,479 immutable evidence references were published. Eligibility is a conversation-quality gate, not a customer or lead classification.
-- Static exclusions are explicit: group chat, `gh_` official account, known system holder, and named service entry. Remaining conversations require at least one inbound and one outbound non-system text message in range.
-- Evidence IDs bind account, source generation, conversation, local message ID, direction, sender, timestamp, and content SHA-256. Evidence bodies are globally deduplicated; `corpus_evidence` maps immutable evidence into each corpus rebuild.
-- Deterministic facts are extracted only from inbound evidence. The verified published corpus contains 739 fact references across phone, landline, age, grade, region, budget, available time, obstacle, and dance-specific explicit need fields.
-- Broad generic region/time/course patterns produced false positives and were removed. Current region extraction uses known administrative names or explicit address context; available-time extraction requires a time expression paired with availability or visit/class intent; explicit need is dance-specific.
-- `scripts/phase2_validate.sh` verifies unit tests, Python compilation, full corpus/session count equality, account/generation scope, content hashes, reconstructed evidence IDs, direction rules, fact foreign keys, and absence of eligible conversations without evidence.
+- 2026-08-03：商品 UI 左侧固定为三个独立原生栏目：“仪表盘”、“客户表”和“消息检索”。仪表盘在 AppKit 中原生显示完整聊天分析结构；客户表独立承载 Phase 4 原生 DeepSeek 筛选工作区；消息检索复用 Chatlog `/api/v1/sessions` 和 `/api/v1/history` 的本机查询能力。不得使用 `WKWebView`、不得打开 `127.0.0.1:5030` 网页、不得暴露参考工具的其他栏目。仪表盘统计与消息检索是确定性本地查询；只有用户点击“生成 DeepSeek 摘要”时才调用 LLM，且必须复用客户表的同一 DeepSeek Base URL、Model、Keychain Key 和外部传输批准，不得引入 GLM 或第二套 AI 配置。未发布 DeepSeek 分析时四项客户 KPI 必须为 0，`eligible_conversations` 只能在未就绪说明中显示。
+- 2026-08-02：实机证明微信已登录、SIP 已关闭且 Chatlog 最终健康时，App 仍可因固定次数的启动等待过早显示“未就绪”。已验证的唯一连接路径是：App 启动并持有 Chatlog `start-http` 进程，后台同时核验该进程监听 `127.0.0.1:5030` 与 `/health` 返回 `status=ok`，真正就绪后自动继续账号、解密、同步和语料构建；不得恢复固定等待次数或把此错误归因于微信重新登录。
+- 2026-08-03：仪表盘实机压力验证发现，脱离 App 的旧 Chatlog 进程可独占 5030，使当前 App 启动的新进程无法监听，请求却命中卡死旧服务。实际清理已确认的旧进程后，唯一当前 Chatlog 服务在约 17 秒内完成整页真实聚合。仪表盘客户端等待上限为 180 秒，不得缓存、伪造或降级统计结果；服务必须继续遵循“当前 App 持有进程 + 该 PID 监听 + 健康检查”的唯一路径。
+- 2026-08-09：仪表盘群聊统计改为调用 Chatlog `/api/v1/sessions` 的分页全量读取（每页 500 条）并逐一统计全部真实群聊，不再保留前 12/500 个群的产品截断；仅使用 Chatlog 已确认支持的 `last-1d`、`last-30d` 和 `all` 时间范围，`today` 映射为 `last-1d`。完整统计在后台任务执行，主界面不被群聊数量阻塞；逐群卡片和群聊对比表同时显示消息类型结构。
+- 2026-09-09：本机正在运行的微信为 `4.1.13/269627`，SIP 已关闭。对该版本实测 Chatlog `start-http` 健康检查、`decompress-data`、15 个主数据库的只读验证、隔离状态库中的 `sync --limit 5000`（发布 1,419 个会话）和完整 183 天语料构建（270 个双向私聊、41,029 条本地证据）均通过；交付 DMG 内的 Chatlog、`dashboard_data.py` 与 `chatlog_client.py` 和源码一致，DMG 校验与签名验证通过。为避免重启用户微信，本次未强制执行无既有密钥状态下的 `restart-and-get-key`。
+- 2026-09-10：当前 Chatlog 实机服务仍忽略 `/api/v1/sessions` 的 `offset`。已验证的全量读取方式是仅使用有效 `limit` 并按 500、1,000、2,000…递增；每轮必须包含上一轮所有会话 ID，直到返回数量小于当前 `limit`。这既避免重复页静默截断，也会在服务数据变动时明确失败。微信 4.1.13 实测得到全部 1,420 个会话，仪表盘已完成 23 个活跃群、30 天趋势、24 小时分布和发言排行的真实聚合。
+- 2026-09-10：消息检索界面读取完整会话集，原生可输入选择框加载上限为 5,000；实测加载全部 1,420 个会话。不得恢复 500 条 UI 截断，也不得使用失效的 `offset` 分页。
+- 2026-09-10：Chatlog 的 `/health` 会早于实际数据接口返回成功；不得仅凭健康检查打开仪表盘或消息检索。应用必须同时确认会话接口已有结果且 `/api/v1/db` 已返回消息数据库，再发起读取。已在 `/Applications/WeChatSalesAgent.app` 冷启动实测，仪表盘由“正在启动”进入完整统计，无 `CHATLOG_SERVICE_UNAVAILABLE` 或空会话错误。
+- 2026-09-10：客户表为 DeepSeek 客户 Agent 对话工作台。不会在同步后预先识别业务或给对话批量打标签；只有用户发送问题才启动本次检索。Agent 从问题生成时间范围、概念组及其同义表达，在真实时间窗口内扫描全部已发布双向私聊；候选不再有固定 24 条上限。每个候选使用命中证据和相邻上下文进行首轮判断，再由不读取首轮结论的第二轮独立审计找回漏判并移除误报。任一批次缺少客户、出现重复或未知 `customer_id`、证据越界时整项任务必须失败。对话筛选结果成为当前客户表和 Excel 导出的唯一数据集；Keychain API Key 缺失时必须明确失败，不得降级为虚构答复。
+- 2026-09-10：已实测重建并替换 `/Applications/WeChatSalesAgent.app`。客户表 Agent 操作区只保留“连接”和对话执行；应用内已无“业务设置”、传输批准、成本估算、批量运行或刷新结果按钮。全套 77 个测试、Objective-C 语法检查、DMG 校验、签名校验和安装包内 Agent 与 Excel 导出源文件一致性均通过。
+- 2026-09-10：客户表重构为 Codex 式单一任务工作台：顶部只保留任务状态和 Excel 导出，主体是连续任务记录，底部固定多行编辑器、模型选择、连接和执行按钮；侧栏顺序固定为“仪表盘、消息检索、客户表”。模型选择位于编辑器下方；空白态文案由单独的、不命中鼠标事件的原生标签承载并随输入切换，不能恢复 `NSTextView` 自绘占位路径。界面只保留“理解任务、证据召回、语义复核、覆盖审计”四行真实过程并原位更新完成批次；完成后显示前 12 位摘要和完整总数，其余结果进入 Excel。默认模型为 `deepseek-v4-flash`，该 Key 的官方 `/models` 返回 `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-v4-flash-vision-exp` 三项。
+- 2026-09-10：安装版真实执行“找出近半年和我有创业讨论的人”成功：时间条件为 183 天，扫描 271 个双向私聊，召回 231 个候选；首轮确认 64 位，独立覆盖审计找回 6 位、移除 10 位，最终确认 60 位。检索规划使用 DeepSeek 官方思考模式；批量判断使用确定性 JSON 输出，避免隐藏推理耗尽输出预算。界面展示的是可验证的执行轨迹与覆盖数字，不展示模型私有思维链。
+- 2026-09-10：按需 Agent 的导出输入必须为 `agent.query.v1`，不能要求旧批量分析的 `workspace.v2` 发布快照。`exportWorkbook:` 必须从当前 Agent 结果构造该任务的指标、模型、问题和线索数据后调用 `Export/build_lead_workbook.mjs`。导出器同时支持 `workspace.v2` 与 `agent.query.v1`，在完成内部公式检查和保存后删除运行库生成的 `.inspect.ndjson` 诊断旁文件，只保留 `.xlsx`。安装版已实测真实结果导出到 `~/Desktop/DeepSeek客户查询结果-验证.xlsx`：包含“分析概览”和“客户激活表”、60 条数据、无公式错误且 ZIP 结构完整；概览大数字行高必须保持 34，避免渲染裁切。
+- 2026-08-02：首次同步后重建工作台时，必须先创建并显示新窗口再隐藏旧窗口，否则 `applicationShouldTerminateAfterLastWindowClosed` 会在同步已成功后退出 App。首次同步数据库在尚未运行 DeepSeek 时可合法不存在 `analysis_runs` 和 `lead_results`，工作台就绪读模型必须返回真实账号与待筛选会话数，DeepSeek 发布数与线索数为 0，不得将缺少 AI 表误报为数据库损坏或未连接。
+- 2026-08-02：最终安装版实机重新同步成功，1,206 个微信会话中排除 407 个无双向文字、332 个公众号、214 个群聊、5 个系统会话和 1 个服务会话，剩余 247 个已同步双向私聊。当时本机 `business_profiles=0`、`ai_settings=0`且 DeepSeek Keychain 项不存在，所以 247 未经过任何关键词或 DeepSeek 筛选。
+- Phase 0 quick、无兜底扫描、Phase 4 AppKit 界面、真实 XLSX 导出全部通过。
+- 只读挂载最终 DMG 后确认不存在 `NativeWorker`、`send_cli.py`、`send_daemon.py`、`send_store.py` 或原生 sender。
+- 当前 DMG：`dist/WeChatSalesAgent-MVP-macOS-arm64.dmg`，SHA-256 `48d6f5f48d05fb857670edbabea22cab7f29581170406ffadb9900d2f5c4cf30`，132,250,354 bytes，生成于 2026-09-10 15:48:14 CST；已重新生成并由构建脚本只读挂载验证签名、内置依赖、Chatlog 许可证和构建清单，随后替换 `/Applications/WeChatSalesAgent.app` 并再次验证签名。安装版主程序 SHA-256 为 `67beff3ab03945dcbf686f5ec44d50a5600bf91714febfc9a6244733b5dc5ff6`，生成于 2026-09-10 15:48:27 CST。该版本包含递增 limit 的完整会话读取、全量逐群对比卡、群聊对比表、消息类型结构、24 小时活跃度、直接消息库聚合的 30 天趋势、热点摘要、全范围按需 DeepSeek 客户 Agent 和当前可查询数据库。
 
-## Phase 3 verified DeepSeek API contract
+## 交付限制
 
-- Use one direct OpenAI-compatible `POST <base-url>/chat/completions` request with bearer authorization. The official API currently accepts `deepseek-v4-flash`; send the user-configured model unchanged and surface provider rejection instead of substituting another model.
-- DeepSeek JSON Output requires `response_format={"type":"json_object"}`, an explicit JSON instruction/example in the prompt, and a bounded `max_tokens`. The provider documents occasional empty content; in this project empty, malformed, truncated, filtered, or resource-interrupted output is a terminal failure with zero retry and zero repair.
-- JSON validity is not business-schema validity. Validate once with Pydantic 2.12.5 using strict types and `extra="forbid"`, then check customer/timestamp equality and every evidence reference against the exact sent packet before persistence.
-- Accept only `finish_reason="stop"`. Actual cost uses provider-returned cache-hit input, cache-miss input, and completion token counts with configured per-million `Decimal` prices; missing or inconsistent usage must never be replaced by a local estimate.
-- `scripts/phase3_ai.sh configure --business-file config/business_profile.example.json` saves validated non-secret DeepSeek/business settings; API keys are read from environment only during configuration and round-trip through Keychain service `com.wechat-sales-agent.deepseek-api-key`.
-- `scripts/phase3_ai.sh estimate --account-id wxid_3prysbeqgvci22_9f8d` completes in under one second after the set-based candidate-query fix. The verified development-data example profile selects 130 of 244 eligible conversations, locally excludes one under-14-data case, and reports a conservative maximum estimate of 321,323 input tokens, 182,000 output tokens, and USD `0.09594522` at the configured July 23, 2026 reference prices.
-- Required fact evidence is selected deterministically before recent context. Whole selected records must fit the 18-evidence/7,000-character packet bounds; required evidence overflow fails with `AI_CONTEXT_TOO_LARGE` rather than truncating, summarizing, or dropping facts.
-- `scripts/phase3_validate.sh` passes its full validation suite, including one-call mock transport, strict JSON/schema rejection, evidence membership, forbidden claims, exact usage/cost arithmetic, atomic result+ledger persistence, full mocked analysis publication, live candidate selection, cost estimation, and explicit external-transfer approval that preserves the separate minor-data gate.
-- The current machine has no DeepSeek API Key in the product Keychain; `scripts/phase3_ai.sh run ...` reports `DEEPSEEK_API_KEY_MISSING` and makes no provider call. The example profile also keeps `external_api_data_transfer_approved=false` and `minor_data_approved=false` until the operator explicitly confirms those gates.
-- `agent_core.ai_cli approve-transfer` performs that explicit confirmation in the configured local database: it changes only `external_api_data_transfer_approved` to `true` and retains the existing `minor_data_approved` value. The native AppKit “批准传输” control presents this confirmation before invoking the command; a temporary-database CLI check verified `external=true` with `minor=false`.
-
-## Phase 4 verified native workspace and export path
-
-- `agent_core.workspace_service.load_snapshot` is the only read model for the dashboard, customer table, evidence detail, drafts, token counts, costs, and Excel export. It accepts only one published analysis run and fails with `PUBLISHED_ANALYSIS_MISSING` instead of showing corpus candidates as analyzed leads.
-- `agent_core.workspace_service.workspace_readiness` is the native panel's pre-analysis read model. When no DeepSeek run is published, it still returns the latest real account, eligible private-chat count, published-run count, and lead-result count so the desktop Agent can run estimate/analysis from the same panel instead of falling back to CLI-only operation.
-- `app/Phase0App/main.m` is now the native AppKit merchant workspace. It contains no WebView or local Web server and supports KPI cards, customer/need/contact search, intention-band filtering, evidence detail, and editable activation copy.
-- The native AppKit workspace exposes the DeepSeek chain directly: save API Key to macOS Keychain through stdin, explicitly approve external data transfer, estimate candidate cost, run DeepSeek with a pre-send confirmation, and refresh the published result. In the current development runtime with no published analysis, it shows account `wxid_3prysbeqgvci22_9f8d` and 244 eligible private-chat conversations rather than `未连接`; the July 28 preview confirmed all five controls fit the toolbar.
-- Force the app to `NSAppearanceNameAqua` and explicitly set table/text-view backgrounds. Without this, a dark macOS appearance produces black embedded table and text surfaces inside the light workspace.
-- An `NSTextView` used as an `NSScrollView.documentView` needs a non-zero initial frame, vertical resizing, and `textContainer.widthTracksTextView=YES`; a zero-frame text view rendered blank even though its string was populated.
-- `scripts/phase4_export.sh` uses the bundled spreadsheet runtime and `@oai/artifact-tool` to publish a real filterable XLSX. Resolve the output path before changing into the temporary module directory or a relative export will be deleted with that directory.
-- `scripts/phase4_validate.sh` verifies the native UI, visual PNG render, strict snapshot behavior, spreadsheet formulas, formula-error scan, visual sheet renders, XLSX archive, and end-to-end export wrapper.
-
-## Phase 6 verified send lifecycle path
-
-- `agent_core.send_certification` is the local native-adapter certification registry for the exact WeChat profile. Runtime capabilities currently report `CERTIFICATION_MISSING` for `text`, `image`, `video`, and `file`; dispatch blocks according to the specific required types for each batch.
-- `agent_core.send_store.SendStore` owns local send batches and recipients in `send_batches` and `send_recipients`; workspace `send_status` must be projected from this audited local state rather than hard-coded.
-- Creating a batch is not a send. `scripts/phase6_send.sh create --account-id <id> --text <message>` selects only actionable leads (`高意向`, `待激活`) unless explicit customer IDs/bands are supplied, stores the final per-recipient text, and marks recipients `已排队`.
-- Send-plan attachments are audited before batch creation. Missing or non-file paths fail closed; accepted files store local path, filename, extension, media type, byte size, and SHA-256 in `attachments_json`.
-- Queued recipients can be cancelled before dispatch. A later blocked dispatch must only mark remaining queued recipients as failed/blocked and must preserve cancelled recipients.
-- `scripts/phase6_send.sh dispatch --batch-id <id>` currently fails closed with `NATIVE_SEND_ADAPTER_NOT_CERTIFIED`; it records the batch as `发送阻断` and never reports success until native text/image/video/file delivery has real `Buf2Resp`/receiver verification.
-- The native AppKit workspace has send controls in the top toolbar: choose attachments, create a send batch, cancel the current batch, and execute dispatch. The UI only includes currently visible actionable leads (`高意向`, `待激活`) when creating a batch; it must not send to `长期培育` or `排除` customers from an all-filter view.
-- The right-side send status field is a real AppKit file-drop target. Merchants can drag local images, videos, or files onto it; the same attachment path list is used by the toolbar file picker and by send-batch creation.
-- Before dispatch, the native AppKit workspace shows a final confirmation with target count, attachment summary, and sample personalized texts. This confirmation precedes the external-send side effect; local batch creation is only the durable send plan.
-- `scripts/phase6_validate.sh` verifies send batch creation, attachment audit, certification-required type detection, blocked dispatch, cancellation, and workspace send-status projection.
+- Chatlog 密钥提取要求 macOS 关闭 SIP；不得宣称默认 Mac 开箱即用，不得用重签名微信等更高风险路径伪装解决。
+- App 左侧必须实时显示 SIP 状态，提供 Apple Silicon 恢复模式指引和重新检测；SIP 未关闭时在启动 Chatlog 前终止连接。
+- 当前机器没有 Developer ID 签名身份，构建物为 ad-hoc 签名、未公证；不得宣称已完成 Apple 正式签名/公证。
+- 每次重建后只保留当前 DMG 的 SHA-256 和字节数，不叠加旧值。

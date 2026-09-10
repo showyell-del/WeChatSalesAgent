@@ -3,7 +3,13 @@ import sys
 from typing import Dict, Optional
 
 
-def event(step: str, status: str, code: str, message: str, evidence: Optional[Dict[str, str]] = None) -> dict:
+def event(
+    step: str,
+    status: str,
+    code: str,
+    message: str,
+    evidence: Optional[Dict[str, str]] = None,
+) -> dict:
     return {
         "step": step,
         "status": status,
@@ -16,4 +22,3 @@ def event(step: str, status: str, code: str, message: str, evidence: Optional[Di
 def emit(item: dict) -> None:
     sys.stdout.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
     sys.stdout.flush()
-

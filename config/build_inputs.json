@@ -1,0 +1,30 @@
+{
+  "schema_version": "wechat-sales-agent.build-inputs.v3",
+  "node": {
+    "version": "v24.14.0",
+    "sha256": "20a18709f0154d668f1bd6f6ea8c2a7ae001447b4b2c339732f22e57a8767a55"
+  },
+  "artifact_tool": {
+    "version": "2.8.36",
+    "tree_sha256": "ba8094866490c82d7fe417353740fb00955085496c285b6cf224dc12ff44476f"
+  },
+  "python_runtime": {
+    "python_runtime_version": "3.9.6",
+    "python_runtime_arch": "arm64",
+    "python_executable_sha256": "ec201019b3d883e095e753405a6fc5c1ae8f3b4905231dfd3dc6b4a1f348056f",
+    "python_library_sha256": "4e2369c5e33114d133b421c51b4cf250dcaf831d195e69409e50a4c373e450ac",
+    "python_resources_tree_sha256": "277be283cf4767fbb5d4331bee39074de9897120eb1fc7e23df95a4889074615",
+    "python_stdlib_tree_sha256": "2711bf7fec076fcdb6718f9b80b9f8a921edf12c1f1948ff14fa2afabeb208af"
+  },
+  "python_packages": {
+    "pydantic_version": "2.12.5",
+    "pydantic_tree_sha256": "3dc711dd4f64aa51472bacf41da304d85bdbef582d6b2b86d59c322cc18f2924",
+    "pydantic_core_version": "2.41.5",
+    "pydantic_core_tree_sha256": "110a2b16cf74b58b970cef524797aec93250f4afe6136886580ed06082377c20",
+    "frida_version": "16.7.19",
+    "frida_tree_sha256": "fdeda40949c2e61c91a11290270f6ec607c78c00cf1b6b1773dd892c03841f4e",
+    "annotated_types_tree_sha256": "208d9e98e3c131e29f3a53fd42441dbbed30ff0245fd6c3b277b4e47362c2376",
+    "typing_inspection_tree_sha256": "2c8c2d6f350331e3c9195077e6ecdee53a0d227581a12afd4ee76d2c9204441a",
+    "typing_extensions_sha256": "4040ca1a1ecbee00d1385c12a93084d1c5bd46f0b774f07e5ae7e91c4f55e696"
+  }
+}

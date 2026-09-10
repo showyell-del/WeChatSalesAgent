@@ -13,8 +13,9 @@ case "$1" in
 esac
 ACCOUNT_ID="${2:-}"
 STATE_DB="${WECHAT_SALES_AGENT_DB:-$PROJECT_DIR/runtime/agent_state.sqlite3}"
-NODE_BIN="/Users/gongshaoyou/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node"
-NODE_MODULES_SOURCE="/Users/gongshaoyou/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules"
+NODE_SOURCE="${WECHAT_AGENT_NODE_SOURCE:?WECHAT_AGENT_NODE_SOURCE must point to the locked Node dependency root}"
+NODE_BIN="$NODE_SOURCE/bin/node"
+NODE_MODULES_SOURCE="$NODE_SOURCE/node_modules"
 WORK_DIR="$(mktemp -d /tmp/wechat-sales-export.XXXXXX)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 ln -s "$NODE_MODULES_SOURCE" "$WORK_DIR/node_modules"

@@ -17,14 +17,24 @@ def main(argv=None):
     until_ts = int(time.time()) + 86400
     since_ts = until_ts - args.days * 86400
     try:
-        result = build_corpus(args.db, args.account_id, since_ts, until_ts, args.addr, args.page_size)
+        result = build_corpus(
+            args.db, args.account_id, since_ts, until_ts, args.addr, args.page_size
+        )
     except ChatlogError as exc:
         emit(event("corpus", "failed", exc.code, exc.message))
         return 1
     except Exception as exc:
         emit(event("corpus", "failed", "CORPUS_BUILD_FAILED", str(exc)))
         return 1
-    emit(event("corpus", "passed", "CORPUS_PUBLISHED", "Private-chat evidence corpus published.", {key: str(value) for key, value in result.items()}))
+    emit(
+        event(
+            "corpus",
+            "passed",
+            "CORPUS_PUBLISHED",
+            "Private-chat evidence corpus published.",
+            {key: str(value) for key, value in result.items()},
+        )
+    )
     return 0
 
 

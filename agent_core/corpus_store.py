@@ -78,7 +78,9 @@ CREATE INDEX IF NOT EXISTS facts_by_conversation ON extracted_facts(corpus_id, u
 """
 
 
-def evidence_id(account_id: str, generation_id: str, username: str, message: Dict) -> str:
+def evidence_id(
+    account_id: str, generation_id: str, username: str, message: Dict
+) -> str:
     content = str(message.get("content", ""))
     identity = {
         "account_id": account_id,
@@ -90,7 +92,9 @@ def evidence_id(account_id: str, generation_id: str, username: str, message: Dic
         "timestamp": int(message.get("timestamp") or 0),
         "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
     }
-    raw = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    raw = json.dumps(
+        identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
     return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -98,7 +102,9 @@ class CorpusStore:
     def __init__(self, connection: sqlite3.Connection):
         self.conn = connection
         self.conn.executescript(CORPUS_SCHEMA)
-        self.conn.execute("INSERT OR IGNORE INTO corpus_evidence(corpus_id,evidence_id) SELECT corpus_id,evidence_id FROM evidence")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO corpus_evidence(corpus_id,evidence_id) SELECT corpus_id,evidence_id FROM evidence"
+        )
         self.conn.commit()
 
     def published_generation(self, account_id: str) -> Dict:
@@ -111,38 +117,99 @@ class CorpusStore:
         return dict(row)
 
     def sessions(self, generation_id: str) -> List[Dict]:
-        return [dict(row) for row in self.conn.execute(
-            "SELECT * FROM sessions WHERE generation_id=? ORDER BY timestamp DESC, username",
-            (generation_id,),
-        )]
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                "SELECT * FROM sessions WHERE generation_id=? ORDER BY timestamp DESC, username",
+                (generation_id,),
+            )
+        ]
 
-    def create_run(self, generation_id: str, account_id: str, since_ts: int, until_ts: int) -> str:
+    def create_run(
+        self, generation_id: str, account_id: str, since_ts: int, until_ts: int
+    ) -> str:
         corpus_id = "corpus_" + uuid.uuid4().hex
         self.conn.execute(
             "INSERT INTO corpus_runs(corpus_id,generation_id,account_id,since_ts,until_ts,status,started_at) VALUES(?,?,?,?,?,'staging',?)",
-            (corpus_id, generation_id, account_id, since_ts, until_ts, int(time.time())),
+            (
+                corpus_id,
+                generation_id,
+                account_id,
+                since_ts,
+                until_ts,
+                int(time.time()),
+            ),
         )
         self.conn.commit()
         return corpus_id
 
-    def add_conversation(self, corpus_id: str, session: Dict, status: str, exclusion_code: str, inbound: int, outbound: int, latest: int) -> None:
+    def add_conversation(
+        self,
+        corpus_id: str,
+        session: Dict,
+        status: str,
+        exclusion_code: str,
+        inbound: int,
+        outbound: int,
+        latest: int,
+    ) -> None:
         self.conn.execute(
             "INSERT INTO corpus_conversations VALUES(?,?,?,?,?,?,?,?)",
-            (corpus_id, session["username"], session.get("chat", ""), status, exclusion_code or None, inbound, outbound, latest),
+            (
+                corpus_id,
+                session["username"],
+                session.get("chat", ""),
+                status,
+                exclusion_code or None,
+                inbound,
+                outbound,
+                latest,
+            ),
         )
 
-    def add_evidence_and_facts(self, corpus_id: str, account_id: str, generation_id: str, username: str, message: Dict, facts: Iterable[Dict]) -> str:
+    def add_evidence_and_facts(
+        self,
+        corpus_id: str,
+        account_id: str,
+        generation_id: str,
+        username: str,
+        message: Dict,
+        facts: Iterable[Dict],
+    ) -> str:
         content = str(message.get("content", ""))
         item_id = evidence_id(account_id, generation_id, username, message)
         self.conn.execute(
             "INSERT OR IGNORE INTO evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (item_id, corpus_id, account_id, generation_id, username, int(message.get("local_id") or 0), 1 if message.get("is_self") else 0, str(message.get("sender", "")), int(message.get("timestamp") or 0), str(message.get("type", "")), content, hashlib.sha256(content.encode("utf-8")).hexdigest()),
+            (
+                item_id,
+                corpus_id,
+                account_id,
+                generation_id,
+                username,
+                int(message.get("local_id") or 0),
+                1 if message.get("is_self") else 0,
+                str(message.get("sender", "")),
+                int(message.get("timestamp") or 0),
+                str(message.get("type", "")),
+                content,
+                hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            ),
         )
-        self.conn.execute("INSERT INTO corpus_evidence(corpus_id,evidence_id) VALUES(?,?)", (corpus_id, item_id))
+        self.conn.execute(
+            "INSERT INTO corpus_evidence(corpus_id,evidence_id) VALUES(?,?)",
+            (corpus_id, item_id),
+        )
         for fact in facts:
             self.conn.execute(
                 "INSERT OR IGNORE INTO extracted_facts VALUES(?,?,?,?,?,?)",
-                (corpus_id, username, fact["field"], fact["value"], item_id, fact["extractor"]),
+                (
+                    corpus_id,
+                    username,
+                    fact["field"],
+                    fact["value"],
+                    item_id,
+                    fact["extractor"],
+                ),
             )
         return item_id
 
@@ -150,19 +217,58 @@ class CorpusStore:
         self.conn.commit()
 
     def fail_run(self, corpus_id: str, code: str, message: str) -> None:
-        self.conn.execute("UPDATE corpus_runs SET status='failed', failure_code=?, failure_message=? WHERE corpus_id=?", (code, message, corpus_id))
+        self.conn.execute(
+            "UPDATE corpus_runs SET status='failed', failure_code=?, failure_message=? WHERE corpus_id=?",
+            (code, message, corpus_id),
+        )
         self.conn.commit()
 
     def publish_run(self, corpus_id: str, account_id: str) -> None:
         with self.conn:
-            self.conn.execute("UPDATE corpus_runs SET status='old' WHERE account_id=? AND status='published'", (account_id,))
-            self.conn.execute("UPDATE corpus_runs SET status='published', published_at=? WHERE corpus_id=?", (int(time.time()), corpus_id))
+            current = self.conn.execute(
+                """SELECT 1 FROM corpus_runs cr
+                   JOIN generations g ON g.generation_id=cr.generation_id
+                   WHERE cr.corpus_id=? AND cr.account_id=? AND cr.status='staging'
+                     AND g.account_id=? AND g.status='published'""",
+                (corpus_id, account_id, account_id),
+            ).fetchone()
+            if current is None:
+                raise RuntimeError("PUBLISHED_GENERATION_MISMATCH")
+            self.conn.execute(
+                "UPDATE corpus_runs SET status='old' WHERE account_id=? AND status='published'",
+                (account_id,),
+            )
+            self.conn.execute(
+                "UPDATE corpus_runs SET status='published', published_at=? WHERE corpus_id=?",
+                (int(time.time()), corpus_id),
+            )
+            tables = {
+                row[0]
+                for row in self.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            if "analysis_runs" in tables:
+                self.conn.execute(
+                    "UPDATE analysis_runs SET status='superseded' WHERE account_id=? AND status='published' AND corpus_id<>?",
+                    (account_id, corpus_id),
+                )
 
     def run_counts(self, corpus_id: str) -> Dict[str, int]:
         conversation = self.conn.execute(
             "SELECT count(*) total, sum(CASE WHEN status='eligible' THEN 1 ELSE 0 END) eligible, sum(CASE WHEN status='excluded' THEN 1 ELSE 0 END) excluded FROM corpus_conversations WHERE corpus_id=?",
             (corpus_id,),
         ).fetchone()
-        evidence_count = self.conn.execute("SELECT count(*) FROM corpus_evidence WHERE corpus_id=?", (corpus_id,)).fetchone()[0]
-        fact_count = self.conn.execute("SELECT count(*) FROM extracted_facts WHERE corpus_id=?", (corpus_id,)).fetchone()[0]
-        return {"total": conversation[0] or 0, "eligible": conversation[1] or 0, "excluded": conversation[2] or 0, "evidence": evidence_count, "facts": fact_count}
+        evidence_count = self.conn.execute(
+            "SELECT count(*) FROM corpus_evidence WHERE corpus_id=?", (corpus_id,)
+        ).fetchone()[0]
+        fact_count = self.conn.execute(
+            "SELECT count(*) FROM extracted_facts WHERE corpus_id=?", (corpus_id,)
+        ).fetchone()[0]
+        return {
+            "total": conversation[0] or 0,
+            "eligible": conversation[1] or 0,
+            "excluded": conversation[2] or 0,
+            "evidence": evidence_count,
+            "facts": fact_count,
+        }

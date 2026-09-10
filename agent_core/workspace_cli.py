@@ -19,7 +19,9 @@ def command_snapshot(args):
 
 def command_readiness(args):
     try:
-        print(json.dumps(workspace_readiness(args.db), ensure_ascii=False, sort_keys=True))
+        print(
+            json.dumps(workspace_readiness(args.db), ensure_ascii=False, sort_keys=True)
+        )
         return 0
     except (OSError, WorkspaceError) as exc:
         code = exc.code if isinstance(exc, WorkspaceError) else "WORKSPACE_READ_FAILED"

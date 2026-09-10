@@ -23,31 +23,77 @@ class ChatlogClient:
     def databases(self) -> Dict[str, List[str]]:
         data = self.get_json("/api/v1/db")
         if not isinstance(data, dict):
-            raise ChatlogError("CHATLOG_DB_INVALID", "Chatlog database response is not a JSON object.")
+            raise ChatlogError(
+                "CHATLOG_DB_INVALID", "Chatlog database response is not a JSON object."
+            )
         return data
 
     def sessions(self, limit: int = 5000, offset: int = 0) -> List[Dict]:
-        data = self.get_json("/api/v1/sessions", {"format": "json", "limit": str(limit), "offset": str(offset)})
+        data = self.get_json(
+            "/api/v1/sessions",
+            {"format": "json", "limit": str(limit), "offset": str(offset)},
+        )
         sessions = data.get("sessions") if isinstance(data, dict) else None
         if not isinstance(sessions, list):
-            raise ChatlogError("CHATLOG_SESSIONS_INVALID", "Chatlog sessions response did not contain a sessions array.")
+            raise ChatlogError(
+                "CHATLOG_SESSIONS_INVALID",
+                "Chatlog sessions response did not contain a sessions array.",
+            )
         return sessions
 
-    def history_page(self, chat: str, since: int, until: int, limit: int, offset: int, is_self: bool) -> Dict:
-        data = self.get_json("/api/v1/history", {
-            "chat": chat,
-            "since": str(since),
-            "until": str(until),
-            "limit": str(limit),
-            "offset": str(offset),
-            "is_self": "true" if is_self else "false",
-            "format": "json",
-        })
+    def all_sessions(self, page_size: int = 5000) -> List[Dict]:
+        if page_size <= 0:
+            raise ChatlogError(
+                "CHATLOG_PAGE_SIZE_INVALID",
+                "Chatlog session page size must be positive.",
+            )
+        previous_ids = set()
+        limit = page_size
+        while True:
+            page = self.sessions(limit=limit)
+            seen = set()
+            for item in page:
+                username = str(item.get("username") or item.get("user_name") or "")
+                if not username:
+                    raise ChatlogError(
+                        "CHATLOG_SESSION_ID_MISSING",
+                        "Chatlog returned a session without a username.",
+                    )
+                if username in seen:
+                    raise ChatlogError("CHATLOG_SESSION_DUPLICATE", "Session list contains duplicate IDs.")
+                seen.add(username)
+            if not previous_ids.issubset(seen):
+                raise ChatlogError("CHATLOG_SESSIONS_CHANGED", "Session list changed during full retrieval; refresh again.")
+            if len(page) < limit:
+                return page
+            previous_ids = seen
+            limit *= 2
+
+    def history_page(
+        self, chat: str, since: int, until: int, limit: int, offset: int, is_self: bool
+    ) -> Dict:
+        data = self.get_json(
+            "/api/v1/history",
+            {
+                "chat": chat,
+                "since": str(since),
+                "until": str(until),
+                "limit": str(limit),
+                "offset": str(offset),
+                "is_self": "true" if is_self else "false",
+                "format": "json",
+            },
+        )
         if not isinstance(data, dict) or not isinstance(data.get("messages"), list):
-            raise ChatlogError("CHATLOG_HISTORY_INVALID", "Chatlog history response did not contain a messages array.")
+            raise ChatlogError(
+                "CHATLOG_HISTORY_INVALID",
+                "Chatlog history response did not contain a messages array.",
+            )
         return data
 
-    def history(self, chat: str, since: int, until: int, page_size: int = 500) -> List[Dict]:
+    def history(
+        self, chat: str, since: int, until: int, page_size: int = 500
+    ) -> List[Dict]:
         merged = []
         for is_self in (False, True):
             offset = 0
@@ -66,9 +112,19 @@ class ChatlogClient:
                 if not messages or offset >= expected:
                     break
             if len(direction) != expected:
-                raise ChatlogError("CHATLOG_HISTORY_PAGINATION_LOSS", "History pagination count did not match Chatlog total for %s." % chat)
+                raise ChatlogError(
+                    "CHATLOG_HISTORY_PAGINATION_LOSS",
+                    "History pagination count did not match Chatlog total for %s."
+                    % chat,
+                )
             merged.extend(direction)
-        merged.sort(key=lambda item: (int(item.get("timestamp") or 0), int(item.get("local_id") or 0), bool(item.get("is_self"))))
+        merged.sort(
+            key=lambda item: (
+                int(item.get("timestamp") or 0),
+                int(item.get("local_id") or 0),
+                bool(item.get("is_self")),
+            )
+        )
         return merged
 
     def get_json(self, path: str, query: Optional[Dict[str, str]] = None) -> Dict:
@@ -78,7 +134,9 @@ class ChatlogClient:
         try:
             return json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise ChatlogError("CHATLOG_JSON_INVALID", "Chatlog response is not valid JSON: %s" % exc) from exc
+            raise ChatlogError(
+                "CHATLOG_JSON_INVALID", "Chatlog response is not valid JSON: %s" % exc
+            ) from exc
 
     def get_text(self, path: str, query: Optional[Dict[str, str]] = None) -> str:
         url = "http://%s%s" % (self.addr, path)
@@ -89,7 +147,10 @@ class ChatlogClient:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return response.read().decode("utf-8")
         except urllib.error.URLError as exc:
-            raise ChatlogError("CHATLOG_SERVICE_UNAVAILABLE", "Chatlog service is unavailable at %s." % self.addr) from exc
+            raise ChatlogError(
+                "CHATLOG_SERVICE_UNAVAILABLE",
+                "Chatlog service is unavailable at %s." % self.addr,
+            ) from exc
 
 
 def iter_db_paths(db_map: Dict[str, Iterable[str]]) -> Iterable[str]:

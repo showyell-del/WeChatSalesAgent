@@ -17,12 +17,20 @@ def validate(db_path: str, account_id: str) -> dict:
         if run is None:
             raise RuntimeError("PUBLISHED_CORPUS_MISSING")
         corpus_id = run["corpus_id"]
-        session_count = connection.execute("SELECT count(*) FROM sessions WHERE generation_id=?", (run["generation_id"],)).fetchone()[0]
-        conversation_count = connection.execute("SELECT count(*) FROM corpus_conversations WHERE corpus_id=?", (corpus_id,)).fetchone()[0]
+        session_count = connection.execute(
+            "SELECT count(*) FROM sessions WHERE generation_id=?",
+            (run["generation_id"],),
+        ).fetchone()[0]
+        conversation_count = connection.execute(
+            "SELECT count(*) FROM corpus_conversations WHERE corpus_id=?", (corpus_id,)
+        ).fetchone()[0]
         if conversation_count != session_count:
             raise RuntimeError("CORPUS_SESSION_COUNT_MISMATCH")
 
-        eligible = connection.execute("SELECT count(*) FROM corpus_conversations WHERE corpus_id=? AND status='eligible'", (corpus_id,)).fetchone()[0]
+        eligible = connection.execute(
+            "SELECT count(*) FROM corpus_conversations WHERE corpus_id=? AND status='eligible'",
+            (corpus_id,),
+        ).fetchone()[0]
         bad_eligible = connection.execute(
             "SELECT count(*) FROM corpus_conversations WHERE corpus_id=? AND status='eligible' AND (inbound_count=0 OR outbound_count=0 OR username LIKE '%@chatroom')",
             (corpus_id,),
@@ -46,7 +54,10 @@ def validate(db_path: str, account_id: str) -> dict:
         ).fetchall()
         for row in rows:
             item = dict(row)
-            if item["account_id"] != account_id or item["generation_id"] != run["generation_id"]:
+            if (
+                item["account_id"] != account_id
+                or item["generation_id"] != run["generation_id"]
+            ):
                 raise RuntimeError("CROSS_SCOPE_EVIDENCE")
             actual_hash = hashlib.sha256(item["content"].encode("utf-8")).hexdigest()
             if actual_hash != item["content_sha256"]:
@@ -58,7 +69,12 @@ def validate(db_path: str, account_id: str) -> dict:
                 "timestamp": item["timestamp"],
                 "content": item["content"],
             }
-            if evidence_id(account_id, run["generation_id"], item["username"], reconstructed) != item["evidence_id"]:
+            if (
+                evidence_id(
+                    account_id, run["generation_id"], item["username"], reconstructed
+                )
+                != item["evidence_id"]
+            ):
                 raise RuntimeError("EVIDENCE_ID_MISMATCH")
 
         orphan_facts = connection.execute(
@@ -71,7 +87,9 @@ def validate(db_path: str, account_id: str) -> dict:
         ).fetchone()[0]
         if orphan_facts or self_facts:
             raise RuntimeError("FACT_EVIDENCE_BINDING_INVALID")
-        facts = connection.execute("SELECT count(*) FROM extracted_facts WHERE corpus_id=?", (corpus_id,)).fetchone()[0]
+        facts = connection.execute(
+            "SELECT count(*) FROM extracted_facts WHERE corpus_id=?", (corpus_id,)
+        ).fetchone()[0]
         return {
             "corpus_id": corpus_id,
             "sessions": session_count,
@@ -94,7 +112,15 @@ def main(argv=None):
     except Exception as exc:
         emit(event("corpus_integrity", "failed", "CORPUS_INTEGRITY_FAILED", str(exc)))
         return 1
-    emit(event("corpus_integrity", "passed", "CORPUS_INTEGRITY_OK", "Published corpus passed scope, hash, direction, and relation checks.", {key: str(value) for key, value in result.items()}))
+    emit(
+        event(
+            "corpus_integrity",
+            "passed",
+            "CORPUS_INTEGRITY_OK",
+            "Published corpus passed scope, hash, direction, and relation checks.",
+            {key: str(value) for key, value in result.items()},
+        )
+    )
     return 0
 
 
