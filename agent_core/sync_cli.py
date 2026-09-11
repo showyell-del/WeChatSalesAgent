@@ -146,6 +146,49 @@ def command_accounts(args):
     return 0
 
 
+def command_prepare_runtime(args):
+    runtime = ChatlogRuntime(args.chatlog_bin)
+    try:
+        accounts = runtime.list_accounts()
+        selected = [
+            item
+            for item in accounts
+            if str(item.get("account", "")) == args.account_id
+        ]
+        if not selected:
+            raise ChatlogError(
+                "WECHAT_ACCOUNT_NOT_FOUND", "Selected WeChat account is not available."
+            )
+        current = any(bool(item.get("current")) for item in selected)
+        historical = any(
+            item.get("source") == "history" or bool(item.get("work_dir"))
+            for item in selected
+        )
+        action_account = args.account_id if historical else ""
+        status = runtime.status(action_account)
+        if not HEX_KEY.fullmatch(str(status.get("data_key", ""))):
+            if historical or not current:
+                raise ChatlogError(
+                    "HISTORICAL_ACCOUNT_KEY_MISSING",
+                    "Selected historical account does not have a saved database key.",
+                )
+            runtime.obtain_key("")
+        runtime.decompress(args.account_id)
+        emit(
+            event(
+                "runtime_prepare",
+                "passed",
+                "CHATLOG_RUNTIME_PREPARED",
+                "WeChat key and local databases are prepared.",
+                {"account_id": args.account_id},
+            )
+        )
+        return 0
+    except ChatlogError as exc:
+        emit(event("runtime_prepare", "failed", exc.code, exc.message))
+        return 1
+
+
 def prepare_account(client, runtime, store, account_id):
     db_map = client.databases()
     account_ids = derive_account_ids(db_map)
@@ -157,9 +200,6 @@ def prepare_account(client, runtime, store, account_id):
     root = data_root_for_account(db_map, account_id)
     store.upsert_account(account_id, root, "connecting")
     runtime_status = runtime.status(account_id)
-    if not HEX_KEY.fullmatch(str(runtime_status.get("data_key", ""))):
-        runtime.obtain_key(account_id)
-        runtime_status = runtime.status(account_id)
     data_key = str(runtime_status.get("data_key", ""))
     if not HEX_KEY.fullmatch(data_key):
         raise ChatlogError(
@@ -298,27 +338,10 @@ def command_sync(args):
         account_ids = derive_account_ids(db_map)
         requested_account = args.account_id.strip()
         if requested_account and requested_account not in account_ids:
-            available = {
-                str(item.get("account", "")) for item in runtime.list_accounts()
-            }
-            if requested_account not in available:
-                raise ChatlogError(
-                    "HISTORICAL_ACCOUNT_NOT_FOUND",
-                    "Selected historical account is not available.",
-                )
-            switched = runtime.switch_account(requested_account)
-            if switched.get("account") != requested_account:
-                raise ChatlogError(
-                    "CHATLOG_ACCOUNT_MISMATCH",
-                    "Chatlog did not switch to the selected account.",
-                )
-            db_map = client.databases()
-            account_ids = derive_account_ids(db_map)
-            if requested_account not in account_ids:
-                raise ChatlogError(
-                    "CHATLOG_SWITCH_DB_PATH_MISMATCH",
-                    "Chatlog database paths did not switch to the selected account.",
-                )
+            raise ChatlogError(
+                "CHATLOG_SERVICE_ACCOUNT_MISMATCH",
+                "Chatlog HTTP service is not bound to the selected account.",
+            )
         if not account_ids:
             raise ChatlogError(
                 "ACCOUNT_PATH_NOT_FOUND",
@@ -447,6 +470,9 @@ def build_parser():
     sub.add_parser("health").set_defaults(func=command_health)
     sub.add_parser("discover").set_defaults(func=command_discover)
     sub.add_parser("accounts").set_defaults(func=command_accounts)
+    prepare_runtime = sub.add_parser("prepare-runtime")
+    prepare_runtime.add_argument("--account-id", required=True)
+    prepare_runtime.set_defaults(func=command_prepare_runtime)
     connect = sub.add_parser("connect")
     connect.add_argument("--account-id", default="")
     connect.set_defaults(func=command_connect)

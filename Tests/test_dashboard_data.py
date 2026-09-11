@@ -8,6 +8,7 @@ class DashboardDataTests(unittest.TestCase):
     def test_dashboard_aggregates_groups_and_speakers(self):
         client = mock.Mock()
         client.all_sessions.return_value = [
+            {"username": "brandsessionholder", "chat": "brandsessionholder", "is_group": False},
             {"username": "private", "chat": "Private", "is_group": False},
             {"username": "g1", "chat": "Group 1", "is_group": True},
             {"username": "g2", "chat": "Group 2", "is_group": True},
@@ -32,6 +33,9 @@ class DashboardDataTests(unittest.TestCase):
         self.assertEqual(len(result["by_hour"]), 24)
         self.assertEqual(result["databases"], [{"kind": "message", "path": "/tmp/biz_message_0.db"}])
         self.assertEqual(result["selected_group"]["chat"], "Group 1")
+        self.assertEqual(
+            [row["username"] for row in result["private_sessions"]], ["private"]
+        )
         self.assertEqual(
             [row["username"] for row in result["group_sessions"]], ["g1", "g2"]
         )

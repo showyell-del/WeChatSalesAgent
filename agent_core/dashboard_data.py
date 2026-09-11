@@ -1,6 +1,7 @@
 from typing import Dict, List
 
 from .chatlog_client import ChatlogClient, ChatlogError
+from .corpus_builder import static_exclusion
 from .dashboard_trend import daily_trend
 
 
@@ -44,7 +45,7 @@ def load_dashboard(
     sessions = client.all_sessions(page_size=500)
     if not sessions:
         raise ChatlogError("CHATLOG_SESSIONS_EMPTY", "未读取到会话，请先连接并同步微信。")
-    private_sessions = [row for row in sessions if not row.get("is_group")]
+    private_sessions = [row for row in sessions if not static_exclusion(row)]
     private_session = next((row for row in private_sessions if row.get("username") == private_chat), None)
     if private_session is None and private_sessions:
         private_session = private_sessions[0]

@@ -232,6 +232,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 @property NSString *snapshotPath;
 @property NSString *startupError;
 @property NSTask *chatlogServiceTask;
+@property NSString *chatlogServiceAccountID;
 @property BOOL didInitializeWorkspace;
 @property BOOL agentCommandRunning;
 @property BOOL wechatSyncRunning;
@@ -342,7 +343,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     return healthy;
 }
 
-- (BOOL)chatlogReadAPIIsReady {
+- (BOOL)chatlogReadAPIIsReadyForAccount:(NSString *)accountID {
     NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
     configuration.timeoutIntervalForRequest = 1;
     configuration.timeoutIntervalForResource = 1;
@@ -362,7 +363,15 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
             NSHTTPURLResponse *databaseHTTP = [databaseResponse isKindOfClass:NSHTTPURLResponse.class] ? (NSHTTPURLResponse *)databaseResponse : nil;
             NSDictionary *databases = databaseData ? [NSJSONSerialization JSONObjectWithData:databaseData options:0 error:nil] : nil;
             NSArray *messageDatabases = databases[@"message"];
-            ready = !databaseError && databaseHTTP.statusCode == 200 && [messageDatabases isKindOfClass:NSArray.class] && messageDatabases.count > 0;
+            NSString *marker = [NSString stringWithFormat:@"/xwechat_files/%@/db_storage/", accountID];
+            __block BOOL accountMatches = accountID.length > 0;
+            for (NSString *group in @[@"session", @"contact", @"message"]) {
+                NSArray *paths = [databases[group] isKindOfClass:NSArray.class] ? databases[group] : @[];
+                for (id value in paths) {
+                    if (![value isKindOfClass:NSString.class] || ![(NSString *)value containsString:marker]) accountMatches = NO;
+                }
+            }
+            ready = !databaseError && databaseHTTP.statusCode == 200 && [messageDatabases isKindOfClass:NSArray.class] && messageDatabases.count > 0 && accountMatches;
             dispatch_semaphore_signal(completed);
         }];
         [databaseTask resume];
@@ -388,6 +397,38 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         kill(pid, SIGKILL);
         while (kill(pid, 0) == 0) [NSThread sleepForTimeInterval:0.05];
     }
+    return YES;
+}
+
+- (void)stopChatlogService {
+    if (self.chatlogServiceTask.running) {
+        [self.chatlogServiceTask terminate];
+        [self.chatlogServiceTask waitUntilExit];
+    }
+    self.chatlogServiceTask = nil;
+    self.chatlogServiceAccountID = nil;
+}
+
+- (BOOL)startChatlogServiceForAccount:(NSString *)accountID binary:(NSString *)binary error:(NSError **)error {
+    if (!accountID.length || [accountID isEqualToString:@"未连接"]) {
+        if (error) *error = [NSError errorWithDomain:@"WeChatSalesAgent" code:1 userInfo:@{NSLocalizedDescriptionKey: @"请先连接并同步微信账号"}];
+        return NO;
+    }
+    if (self.chatlogServiceTask.running && [self.chatlogServiceAccountID isEqualToString:accountID]) return YES;
+    [self stopChatlogService];
+    if (![self prepareOwnedChatlogPortForBinary:binary]) {
+        if (error) *error = [NSError errorWithDomain:@"WeChatSalesAgent" code:2 userInfo:@{NSLocalizedDescriptionKey: @"5030 端口被其他程序占用"}];
+        return NO;
+    }
+    NSTask *task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:binary];
+    task.arguments = @[@"action", @"start-http", @"--history", accountID];
+    task.environment = self.agentEnvironment;
+    task.standardOutput = NSFileHandle.fileHandleWithNullDevice;
+    task.standardError = NSFileHandle.fileHandleWithNullDevice;
+    if (![task launchAndReturnError:error]) return NO;
+    self.chatlogServiceTask = task;
+    self.chatlogServiceAccountID = accountID;
     return YES;
 }
 
@@ -603,14 +644,15 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 
 - (void)openAnalyticsDashboard:(id)sender {
     (void)sender;
-    if (self.chatlogServiceTask.running && [self process:self.chatlogServiceTask.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReady]) { [self showAnalyticsDashboardView]; return; }
+    NSString *accountID = self.snapshot[@"account_id"] ?: @"";
+    if (self.chatlogServiceTask.running && [self.chatlogServiceAccountID isEqualToString:accountID] && [self process:self.chatlogServiceTask.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:accountID]) { [self showAnalyticsDashboardView]; return; }
     if (self.dashboardOpening) return;
     NSString *binary = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Chatlog/chatlog-darwin-arm64"];
     if (![[NSFileManager defaultManager] isExecutableFileAtPath:binary]) { self.statusLabel.stringValue = @"本地微信数据组件缺失"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
-    if (![self prepareOwnedChatlogPortForBinary:binary]) { self.statusLabel.stringValue = @"5030 端口被其他程序占用"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
-    if (!self.chatlogServiceTask || !self.chatlogServiceTask.running) { NSTask *task = [[NSTask alloc] init]; task.executableURL = [NSURL fileURLWithPath:binary]; task.arguments = @[@"action", @"start-http"]; task.environment = self.agentEnvironment; task.standardOutput = NSFileHandle.fileHandleWithNullDevice; task.standardError = NSFileHandle.fileHandleWithNullDevice; NSError *launchError = nil; if (![task launchAndReturnError:&launchError]) { self.statusLabel.stringValue = launchError.localizedDescription ?: @"仪表盘服务启动失败"; return; } self.chatlogServiceTask = task; }
+    NSError *launchError = nil;
+    if (![self startChatlogServiceForAccount:accountID binary:binary error:&launchError]) { self.statusLabel.stringValue = launchError.localizedDescription ?: @"仪表盘服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
     self.dashboardOpening = YES; self.statusLabel.stringValue = @"正在启动聊天数据仪表盘…"; self.statusLabel.textColor = NSColor.systemOrangeColor; NSTask *ownedService = self.chatlogServiceTask;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ while (ownedService.running) { if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReady]) { dispatch_async(dispatch_get_main_queue(), ^{ if (self.chatlogServiceTask != ownedService || !self.dashboardOpening) return; self.dashboardOpening = NO; [self showAnalyticsDashboardView]; }); return; } [NSThread sleepForTimeInterval:0.25]; } dispatch_async(dispatch_get_main_queue(), ^{ if (!self.dashboardOpening) return; self.dashboardOpening = NO; self.statusLabel.stringValue = @"仪表盘服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; }); });
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ while (ownedService.running) { if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:accountID]) { dispatch_async(dispatch_get_main_queue(), ^{ if (self.chatlogServiceTask != ownedService || !self.dashboardOpening) return; self.dashboardOpening = NO; [self showAnalyticsDashboardView]; }); return; } [NSThread sleepForTimeInterval:0.25]; } dispatch_async(dispatch_get_main_queue(), ^{ if (!self.dashboardOpening) return; self.dashboardOpening = NO; self.statusLabel.stringValue = @"仪表盘服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; }); });
 }
 
 - (void)loadMessageSearchSessions {
@@ -761,24 +803,20 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 
 - (void)openMessageSearch:(id)sender {
     (void)sender;
-    if (self.chatlogServiceTask.running && [self process:self.chatlogServiceTask.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReady]) { [self showMessageSearchView]; return; }
+    NSString *accountID = self.snapshot[@"account_id"] ?: @"";
+    if (self.chatlogServiceTask.running && [self.chatlogServiceAccountID isEqualToString:accountID] && [self process:self.chatlogServiceTask.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:accountID]) { [self showMessageSearchView]; return; }
     if (self.messageSearchOpening) { self.statusLabel.stringValue = @"正在启动消息检索…"; self.statusLabel.textColor = NSColor.systemOrangeColor; return; }
     NSString *chatlogBinary = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Chatlog/chatlog-darwin-arm64"];
     if (![[NSFileManager defaultManager] isExecutableFileAtPath:chatlogBinary]) { self.statusLabel.stringValue = @"本地微信数据组件缺失"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
-    if (![self prepareOwnedChatlogPortForBinary:chatlogBinary]) { self.statusLabel.stringValue = @"5030 端口被其他程序占用"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
-    if (!self.chatlogServiceTask || !self.chatlogServiceTask.running) {
-        NSTask *task = [[NSTask alloc] init]; task.executableURL = [NSURL fileURLWithPath:chatlogBinary]; task.arguments = @[@"action", @"start-http"]; task.environment = self.agentEnvironment; task.standardOutput = NSFileHandle.fileHandleWithNullDevice; task.standardError = NSFileHandle.fileHandleWithNullDevice;
-        NSError *launchError = nil;
-        if (![task launchAndReturnError:&launchError]) { self.statusLabel.stringValue = launchError.localizedDescription ?: @"消息检索服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
-        self.chatlogServiceTask = task;
-    }
+    NSError *launchError = nil;
+    if (![self startChatlogServiceForAccount:accountID binary:chatlogBinary error:&launchError]) { self.statusLabel.stringValue = launchError.localizedDescription ?: @"消息检索服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
     self.messageSearchOpening = YES;
     self.statusLabel.stringValue = @"正在启动消息检索…";
     self.statusLabel.textColor = NSColor.systemOrangeColor;
     NSTask *ownedService = self.chatlogServiceTask;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         while (ownedService.running) {
-            if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReady]) {
+            if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:accountID]) {
                 dispatch_async(dispatch_get_main_queue(), ^{ if (self.chatlogServiceTask != ownedService || !self.messageSearchOpening) return; self.messageSearchOpening = NO; [self showMessageSearchView]; });
                 return;
             }
@@ -1110,7 +1148,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     NSString *accountID = self.snapshot[@"account_id"] ?: @"未连接";
     NSNumber *eligible = [self loadReadiness:nil][@"eligible_conversations"] ?: @0;
     if ([accountID isEqualToString:@"未连接"]) return @"请先连接微信。";
-    return [NSString stringWithFormat:@"已同步 %@ 个对话，可以开始提问。", eligible];
+    return [NSString stringWithFormat:@"账号 %@ · 已同步 %@ 个对话，可以开始提问。", accountID, eligible];
 }
 
 - (void)askCustomerAgent:(id)sender {
@@ -1341,29 +1379,27 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     if (!accounts.count) return @"";
     NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText = @"选择要连接的微信账号";
-    alert.informativeText = @"检测到多个历史账号，必须明确选择后才会同步。";
+    alert.informativeText = @"当前登录与历史账号已明确标注；选择后本次解密、查询和分析只绑定这一账号。";
     NSPopUpButton *picker = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 420, 26) pullsDown:NO];
-    for (NSDictionary *account in accounts) [picker addItemWithTitle:account[@"account_id"]];
-    if (current.count == 1) [picker selectItemWithTitle:current[0][@"account_id"]];
+    for (NSDictionary *account in accounts) {
+        NSString *state = [account[@"current"] isEqualToString:@"true"] ? @"当前登录" : @"历史账号";
+        [picker addItemWithTitle:[NSString stringWithFormat:@"%@ · %@", account[@"account_id"], state]];
+        picker.lastItem.representedObject = account[@"account_id"];
+    }
+    if (current.count == 1) {
+        NSUInteger index = [accounts indexOfObject:current[0]];
+        if (index != NSNotFound) [picker selectItemAtIndex:index];
+    }
     alert.accessoryView = picker;
     [alert addButtonWithTitle:@"连接此账号"];
     [alert addButtonWithTitle:@"取消"];
-    return [alert runModal] == NSAlertFirstButtonReturn ? picker.titleOfSelectedItem : @"";
+    return [alert runModal] == NSAlertFirstButtonReturn ? picker.selectedItem.representedObject : @"";
 }
 
-- (void)finishWeChatSyncWithBinary:(NSString *)chatlogBinary {
+- (void)finishWeChatSyncWithBinary:(NSString *)chatlogBinary accountID:(NSString *)selectedAccountID {
     int status = 1;
     NSError *error = nil;
     NSDictionary *eventObject = nil;
-    NSArray<NSString *> *accountLines = [self runAgentCommand:@[@"-m", @"agent_core.sync_cli", @"--db", self.currentDBPath, @"--chatlog-bin", chatlogBinary, @"accounts"] terminationStatus:&status error:&error];
-    NSString *selectedAccountID = status == 0 ? [self selectedAccountIDFromLines:accountLines] : @"";
-    if (!selectedAccountID.length) {
-        self.wechatSyncRunning = NO;
-        self.statusLabel.stringValue = status == 0 ? @"未选择微信账号" : @"无法读取可用的微信账号";
-        self.statusLabel.textColor = NSColor.systemRedColor;
-        return;
-    }
-
     NSArray<NSString *> *syncLines = [self runAgentCommand:@[@"-m", @"agent_core.sync_cli", @"--db", self.currentDBPath, @"--chatlog-bin", chatlogBinary, @"sync", @"--account-id", selectedAccountID, @"--limit", @"5000"] terminationStatus:&status error:&error];
     eventObject = [self lastJSONObjectFromLines:syncLines];
     if (status != 0) {
@@ -1373,9 +1409,9 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         return;
     }
     NSString *accountID = eventObject[@"evidence"][@"account_id"] ?: @"";
-    if (!accountID.length) {
+    if (![accountID isEqualToString:selectedAccountID]) {
         self.wechatSyncRunning = NO;
-        self.statusLabel.stringValue = @"同步完成但未取得微信账号标识";
+        self.statusLabel.stringValue = @"同步结果账号与所选账号不一致";
         self.statusLabel.textColor = NSColor.systemRedColor;
         return;
     }
@@ -1416,25 +1452,28 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         self.statusLabel.textColor = NSColor.systemRedColor;
         return;
     }
-    if (![self prepareOwnedChatlogPortForBinary:chatlogBinary]) {
-        self.statusLabel.stringValue = @"5030 端口被其他程序占用";
+    int status = 1;
+    NSError *error = nil;
+    NSArray<NSString *> *accountLines = [self runAgentCommand:@[@"-m", @"agent_core.sync_cli", @"--db", self.currentDBPath, @"--chatlog-bin", chatlogBinary, @"accounts"] terminationStatus:&status error:&error];
+    NSString *selectedAccountID = status == 0 ? [self selectedAccountIDFromLines:accountLines] : @"";
+    if (!selectedAccountID.length) {
+        self.statusLabel.stringValue = status == 0 ? @"未选择微信账号" : @"无法读取可用的微信账号";
         self.statusLabel.textColor = NSColor.systemRedColor;
         return;
     }
-    if (!self.chatlogServiceTask || !self.chatlogServiceTask.running) {
-        NSTask *task = [[NSTask alloc] init];
-        task.executableURL = [NSURL fileURLWithPath:chatlogBinary];
-        task.arguments = @[@"action", @"start-http"];
-        task.environment = self.agentEnvironment;
-        task.standardOutput = NSFileHandle.fileHandleWithNullDevice;
-        task.standardError = NSFileHandle.fileHandleWithNullDevice;
-        NSError *launchError = nil;
-        if (![task launchAndReturnError:&launchError]) {
-            self.statusLabel.stringValue = launchError.localizedDescription ?: @"本地微信数据服务启动失败";
-            self.statusLabel.textColor = NSColor.systemRedColor;
-            return;
-        }
-        self.chatlogServiceTask = task;
+    if (self.chatlogServiceTask.running && ![self.chatlogServiceAccountID isEqualToString:selectedAccountID]) [self stopChatlogService];
+    NSArray<NSString *> *prepareLines = [self runAgentCommand:@[@"-m", @"agent_core.sync_cli", @"--db", self.currentDBPath, @"--chatlog-bin", chatlogBinary, @"prepare-runtime", @"--account-id", selectedAccountID] terminationStatus:&status error:&error];
+    if (status != 0) {
+        NSDictionary *eventObject = [self lastJSONObjectFromLines:prepareLines];
+        self.statusLabel.stringValue = [self messageFromEvent:eventObject defaultMessage:(error.localizedDescription ?: @"微信本地数据准备失败")];
+        self.statusLabel.textColor = NSColor.systemRedColor;
+        return;
+    }
+    NSError *launchError = nil;
+    if (![self startChatlogServiceForAccount:selectedAccountID binary:chatlogBinary error:&launchError]) {
+        self.statusLabel.stringValue = launchError.localizedDescription ?: @"本地微信数据服务启动失败";
+        self.statusLabel.textColor = NSColor.systemRedColor;
+        return;
     }
 
     self.wechatSyncRunning = YES;
@@ -1443,11 +1482,11 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     NSTask *ownedService = self.chatlogServiceTask;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         while (ownedService.running) {
-            if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReady]) {
+            if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:selectedAccountID]) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if (self.chatlogServiceTask != ownedService || !self.wechatSyncRunning) return;
                     self.statusLabel.stringValue = @"正在解密并同步微信会话…";
-                    [self finishWeChatSyncWithBinary:chatlogBinary];
+                    [self finishWeChatSyncWithBinary:chatlogBinary accountID:selectedAccountID];
                 });
                 return;
             }
@@ -1541,8 +1580,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 - (void)applicationWillTerminate:(NSNotification *)notification {
     if (self.activeAgentTask.running) [self.activeAgentTask terminate];
     self.activeAgentTask = nil;
-    if (self.chatlogServiceTask.running) [self.chatlogServiceTask terminate];
-    self.chatlogServiceTask = nil;
+    [self stopChatlogService];
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return YES; }

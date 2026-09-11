@@ -84,7 +84,8 @@ class CodeReviewRegressionTests(unittest.TestCase):
         )[0]
         self.assertIn('buttonWithTitle:@"≡  消息检索"', source)
         self.assertIn("chatlogReadAPIIsReady", message_search)
-        self.assertIn('@[@"action", @"start-http"]', message_search)
+        self.assertIn("startChatlogServiceForAccount:accountID", message_search)
+        self.assertIn('@[@"action", @"start-http", @"--history", accountID]', source)
         self.assertIn("ownedService.running", message_search)
         self.assertIn("agent_core.message_search_cli", source)
         self.assertIn("agent_core.dashboard_cli", source)
@@ -129,6 +130,39 @@ class CodeReviewRegressionTests(unittest.TestCase):
         self.assertIn("while (ownedService.running)", connect)
         self.assertNotIn("attempt <", connect)
         self.assertNotIn("请先完成微信重新登录", connect)
+
+    def test_first_install_prepares_chatlog_before_http_start(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        connect = source.split("- (void)connectWeChatData:", 1)[1].split(
+            "- (NSArray<NSString *> *)commaSeparatedValues:", 1
+        )[0]
+        self.assertLess(
+            connect.index('prepare-runtime'),
+            connect.index('startChatlogServiceForAccount:selectedAccountID'),
+        )
+
+    def test_account_selection_is_bound_through_http_and_sync(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        finish = source.split("- (void)finishWeChatSyncWithBinary:", 1)[1].split(
+            "- (void)connectWeChatData:", 1
+        )[0]
+        connect = source.split("- (void)connectWeChatData:", 1)[1].split(
+            "- (void)saveDeepSeekKey:", 1
+        )[0]
+        self.assertNotIn('agent_core.sync_cli", @"--db", self.currentDBPath, @"--chatlog-bin", chatlogBinary, @"accounts"', finish)
+        self.assertIn("finishWeChatSyncWithBinary:chatlogBinary accountID:selectedAccountID", connect)
+        self.assertIn('@[@"action", @"start-http", @"--history", accountID]', source)
+        self.assertIn("chatlogReadAPIIsReadyForAccount:selectedAccountID", connect)
+        self.assertIn("chatlogServiceAccountID", source)
+
+    def test_account_picker_and_workspace_identify_bound_account(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        picker = source.split("- (NSString *)selectedAccountIDFromLines:", 1)[1].split(
+            "- (void)finishWeChatSyncWithBinary:", 1
+        )[0]
+        self.assertIn('@"当前登录"', picker)
+        self.assertIn('@"历史账号"', picker)
+        self.assertIn('@"账号 %@ · 已同步 %@ 个对话，可以开始提问。"', source)
 
     def test_keychain_secret_is_never_passed_in_process_arguments(self):
         source = (ROOT / "agent_core/keychain.py").read_text(encoding="utf-8")

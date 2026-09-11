@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agent_core.chatlog_client import ChatlogClient, derive_account_ids
 from agent_core.sync_cli import DEFAULT_CHATLOG_BIN, select_account_id
-from agent_core.sync_cli import command_sync
+from agent_core.sync_cli import command_prepare_runtime, command_sync, prepare_account
 from types import SimpleNamespace
 from agent_core.sync_store import SyncStore
 from agent_core.chatlog_runtime import primary_db_paths, verify_runtime_account
@@ -17,7 +17,59 @@ from unittest import mock
 
 
 class Phase1SyncTests(unittest.TestCase):
-    def test_sync_switches_selected_historical_account_before_reading(self):
+    def test_prepare_runtime_bootstraps_current_account_before_http_start(self):
+        runtime = mock.Mock()
+        runtime.list_accounts.return_value = [
+            {"account": "wxid_current", "current": True}
+        ]
+        runtime.status.return_value = {"data_key": ""}
+        args = SimpleNamespace(chatlog_bin="chatlog", account_id="wxid_current")
+        with mock.patch("agent_core.sync_cli.ChatlogRuntime", return_value=runtime):
+            self.assertEqual(command_prepare_runtime(args), 0)
+        runtime.status.assert_called_once_with("")
+        runtime.obtain_key.assert_called_once_with("")
+        runtime.decompress.assert_called_once_with("wxid_current")
+
+    def test_prepare_runtime_reuses_valid_key(self):
+        runtime = mock.Mock()
+        runtime.list_accounts.return_value = [
+            {"account": "wxid_current", "current": True}
+        ]
+        runtime.status.return_value = {"data_key": "a" * 64}
+        args = SimpleNamespace(chatlog_bin="chatlog", account_id="wxid_current")
+        with mock.patch("agent_core.sync_cli.ChatlogRuntime", return_value=runtime):
+            self.assertEqual(command_prepare_runtime(args), 0)
+        runtime.obtain_key.assert_not_called()
+        runtime.decompress.assert_called_once_with("wxid_current")
+
+    def test_prepare_runtime_prefers_saved_key_for_current_account(self):
+        runtime = mock.Mock()
+        runtime.list_accounts.return_value = [
+            {"source": "process", "account": "wxid_current", "current": True},
+            {"source": "history", "account": "wxid_current", "current": False},
+        ]
+        runtime.status.return_value = {"data_key": "a" * 64}
+        args = SimpleNamespace(chatlog_bin="chatlog", account_id="wxid_current")
+        with mock.patch("agent_core.sync_cli.ChatlogRuntime", return_value=runtime):
+            self.assertEqual(command_prepare_runtime(args), 0)
+        runtime.status.assert_called_once_with("wxid_current")
+        runtime.obtain_key.assert_not_called()
+        runtime.decompress.assert_called_once_with("wxid_current")
+
+    def test_prepare_runtime_never_restarts_for_historical_account(self):
+        runtime = mock.Mock()
+        runtime.list_accounts.return_value = [
+            {"source": "history", "account": "wxid_history", "current": False}
+        ]
+        runtime.status.return_value = {"data_key": ""}
+        args = SimpleNamespace(chatlog_bin="chatlog", account_id="wxid_history")
+        with mock.patch("agent_core.sync_cli.ChatlogRuntime", return_value=runtime):
+            self.assertEqual(command_prepare_runtime(args), 1)
+        runtime.status.assert_called_once_with("wxid_history")
+        runtime.obtain_key.assert_not_called()
+        runtime.decompress.assert_not_called()
+
+    def test_sync_rejects_http_service_bound_to_another_account(self):
         class Client:
             calls = 0
 
@@ -29,10 +81,9 @@ class Phase1SyncTests(unittest.TestCase):
 
             def databases(self):
                 Client.calls += 1
-                account = "wxid_current" if Client.calls == 1 else "wxid_history"
                 return {
                     "message": [
-                        f"/source/xwechat_files/{account}/db_storage/message/message_0.db"
+                        "/source/xwechat_files/wxid_current/db_storage/message/message_0.db"
                     ]
                 }
 
@@ -40,17 +91,11 @@ class Phase1SyncTests(unittest.TestCase):
                 return [{"username": "customer"}]
 
         class Runtime:
-            switched = []
-
             def __init__(self, *_):
                 pass
 
-            def list_accounts(self):
-                return [{"account": "wxid_history"}]
-
-            def switch_account(self, account):
-                Runtime.switched.append(account)
-                return {"account": account}
+            def switch_account(self, _):
+                raise AssertionError("sync must not mutate Chatlog account state")
 
         store = mock.MagicMock()
         store.create_generation.return_value = "generation"
@@ -75,8 +120,23 @@ class Phase1SyncTests(unittest.TestCase):
                 ),
             ),
         ):
-            self.assertEqual(command_sync(args), 0)
-        self.assertEqual(Runtime.switched, ["wxid_history"])
+            self.assertEqual(command_sync(args), 1)
+        self.assertEqual(Client.calls, 1)
+
+    def test_sync_verification_never_restarts_wechat_for_a_missing_key(self):
+        client = mock.Mock()
+        client.databases.return_value = {
+            "message": [
+                "/source/xwechat_files/wxid_history/db_storage/message/message_0.db"
+            ]
+        }
+        runtime = mock.Mock()
+        runtime.status.return_value = {"data_key": ""}
+        with self.assertRaises(ChatlogError) as caught:
+            prepare_account(client, runtime, mock.Mock(), "wxid_history")
+        self.assertEqual(caught.exception.code, "DATABASE_KEY_MISSING")
+        runtime.obtain_key.assert_not_called()
+        runtime.decompress.assert_not_called()
 
     def test_chatlog_action_timeout_is_typed(self):
         runtime = ChatlogRuntime("/tmp/chatlog")
