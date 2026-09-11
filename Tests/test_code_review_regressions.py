@@ -35,6 +35,7 @@ class CodeReviewRegressionTests(unittest.TestCase):
 
         app = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
         build = (ROOT / "scripts/build_phase0_app.sh").read_text(encoding="utf-8")
+        info_plist = (ROOT / "app/Phase0App/Info.plist").read_text(encoding="utf-8")
         workbook = (ROOT / "scripts/build_lead_workbook.mjs").read_text(
             encoding="utf-8"
         )
@@ -74,6 +75,8 @@ class CodeReviewRegressionTests(unittest.TestCase):
 
     def test_only_native_dashboard_and_message_search_are_exposed(self):
         source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        info_plist = (ROOT / "app/Phase0App/Info.plist").read_text(encoding="utf-8")
+        build = (ROOT / "scripts/build_phase0_app.sh").read_text(encoding="utf-8")
         self.assertIn(
             'buttonWithTitle:@"▦  仪表盘" target:self action:@selector(openAnalyticsDashboard:)',
             source,
@@ -99,7 +102,9 @@ class CodeReviewRegressionTests(unittest.TestCase):
         self.assertNotIn('buttonWithTitle:@"查看客户表"', source)
         self.assertNotIn("WKWebView", source)
         self.assertNotIn("openURL:", source)
-        self.assertIn('Label(@"客户 Agent"', source)
+        self.assertIn('Label(@"微信客户分析 Agent"', source)
+        self.assertIn("WeChatCustomerAnalysis.icns", info_plist + build)
+        self.assertIn("微信客户分析 Agent", info_plist)
         self.assertIn('AgentComposerTextView', source)
         self.assertIn('deepseek-v4-flash', source)
         self.assertNotIn('Label(@"任务记录"', source)

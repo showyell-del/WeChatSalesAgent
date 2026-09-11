@@ -53,6 +53,7 @@ mkdir -p \
   "$RESOURCES_DIR/Export/node_modules/@oai"
 
 cp app/Phase0App/Info.plist "$APP_DIR/Contents/Info.plist"
+/usr/bin/ditto --noqtn app/Phase0App/WeChatCustomerAnalysis.icns "$RESOURCES_DIR/WeChatCustomerAnalysis.icns"
 /usr/bin/ditto --noqtn agent_core "$RESOURCES_DIR/Python/agent_core"
 find "$RESOURCES_DIR/Python" -type d -name __pycache__ -prune -exec rm -rf {} +
 

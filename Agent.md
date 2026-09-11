@@ -11,6 +11,7 @@
 ## 当前目录真相
 
 - `app/Phase0App/main.m`：唯一桌面 UI，负责首次连接、按需 DeepSeek Agent 查询、客户表和 Excel 导出。
+- `app/Phase0App/WeChatCustomerAnalysis.icns`：macOS 应用图标源；构建时必须打包到 `Contents/Resources` 并由 Info.plist 指定。
 - `agent_core/`：同步、证据语料、AI 分析和工作台读模型；不包含发送运行时。
 - `chatlog/chatlog-darwin-arm64`：App 内置的 Chatlog Alpha Apple Silicon 依赖；许可证保留在 `chatlog/LICENSE`。
 - `dist/WeChatSalesAgent-MVP-macOS-arm64.dmg`：唯一对外交付物；验证后必须删除中间 `.app`。
@@ -24,7 +25,7 @@
 - 用户发送 Agent 指令后，DeepSeek 先生成包含时间范围和概念组的检索计划；本机按时间条件全量召回候选，再分批完成第一轮语义判断和不携带首轮结论的独立覆盖审计。所有模型请求必须使用 OpenAI-compatible `/chat/completions` 的 JSON Output。
 - 空内容、非 JSON、无效关键词、未知客户 ID 或证据越界均终止失败，不修复、不重试、不换模型。
 - API Key 保存在 macOS Keychain。没有“业务设置”、传输批准、成本估算或批量分析前置流程；用户发送本次问题即是本次按需分析的唯一触发点。
-- 客户 Agent 默认模型为 `deepseek-v4-flash`。模型选择保存在本机 `agent_settings`，点击“模型连接”保存 Key 后必须调用 DeepSeek `GET /models` 刷新该账号完整可用模型列表；不可把模型写死为旧版 `deepseek-chat` 或 `deepseek-reasoner`。
+- 对外应用名称统一为“微信客户分析 Agent”；应用图标、Info.plist、窗口标题、侧栏品牌、README 和 DMG 卷标必须同步，缺一不得还原“微信客户激活 Agent”或“WeChat Sales Agent”对外文案。
 
 ## 已禁止的原生发送路径
 
@@ -73,7 +74,7 @@
 - 2026-08-02：最终安装版实机重新同步成功，1,206 个微信会话中排除 407 个无双向文字、332 个公众号、214 个群聊、5 个系统会话和 1 个服务会话，剩余 247 个已同步双向私聊。当时本机 `business_profiles=0`、`ai_settings=0`且 DeepSeek Keychain 项不存在，所以 247 未经过任何关键词或 DeepSeek 筛选。
 - Phase 0 quick、无兜底扫描、Phase 4 AppKit 界面、真实 XLSX 导出全部通过。
 - 只读挂载最终 DMG 后确认不存在 `NativeWorker`、`send_cli.py`、`send_daemon.py`、`send_store.py` 或原生 sender。
-- 当前 DMG：`dist/WeChatSalesAgent-MVP-macOS-arm64.dmg`，SHA-256 `ae47826500b9a5ae7e09167859390e663dec3552dd6630ee5fb3ff5874649c1d`，132,245,302 bytes，生成于 2026-09-11 00:11:10 CST；已由构建脚本只读挂载验证签名、内置依赖、Chatlog 许可证和构建清单，并额外执行 `hdiutil verify`、挂载后签名验证、源码与包内 `agent_core` 全目录比对及安装版逐字节比对。安装包与 `/Applications/WeChatSalesAgent.app` 的主程序 SHA-256 均为 `cde649f9ec23ae21683a14666afb6c12dd9c2e33fb2d676e712227ec17113da6`，357,088 bytes。该版本修复多账号数据源错配、旧服务复用、历史账号误重启取钥和仪表盘系统占位会话，并保留全量会话、消息检索、按需 DeepSeek 客户 Agent 和 Excel 导出。
+- 当前 DMG：`dist/WeChatSalesAgent-MVP-macOS-arm64.dmg`，SHA-256 `b1858c64d8ae593a62045f5dbaf8a98889736c1a17b3cfb5a42f27f0cbd9bbcd`，134,242,903 bytes，生成于 2026-09-11 15:12:48 CST；已由构建脚本只读挂载验证签名、内置依赖、Chatlog 许可证和构建清单，并额外执行 `hdiutil verify`、挂载后签名验证、新图标资源验证及安装版界面文案验证。安装包与 `/Applications/WeChatSalesAgent.app` 的主程序 SHA-256 均为 `c944978818ce9f01fca4abf625eb0e24b1305fda09cc2d84d0b65ab08ee722a0`，357,088 bytes。该版本统一应用名为“微信客户分析 Agent”，并内置新 `WeChatCustomerAnalysis.icns` 图标，同时保留多账号数据隔离、全量会话、消息检索、按需 DeepSeek 客户 Agent 和 Excel 导出。
 
 ## 交付限制
 

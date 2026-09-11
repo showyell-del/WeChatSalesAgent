@@ -7,7 +7,11 @@
   <key>CFBundleIdentifier</key>
   <string>com.wechat-sales-agent.desktop</string>
   <key>CFBundleName</key>
-  <string>WeChat Sales Agent</string>
+  <string>微信客户分析 Agent</string>
+  <key>CFBundleDisplayName</key>
+  <string>微信客户分析 Agent</string>
+  <key>CFBundleIconFile</key>
+  <string>WeChatCustomerAnalysis.icns</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

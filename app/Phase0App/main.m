@@ -689,7 +689,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     NSView *sidebar = [[NSView alloc] initWithFrame:NSZeroRect];
     sidebar.wantsLayer = YES;
     sidebar.layer.backgroundColor = [NSColor colorWithWhite:0.965 alpha:1].CGColor;
-    NSTextField *brand = Label(@"客户 Agent", 19, [NSColor colorWithWhite:0.12 alpha:1], YES);
+    NSTextField *brand = Label(@"微信客户分析 Agent", 19, [NSColor colorWithWhite:0.12 alpha:1], YES);
     NSTextField *tagline = Label(@"DeepSeek", 11, [NSColor colorWithWhite:0.45 alpha:1], NO);
     NSButton *dashboardButton = [NSButton buttonWithTitle:@"▦  仪表盘" target:self action:@selector(openAnalyticsDashboard:)];
     dashboardButton.bordered = NO; dashboardButton.alignment = NSTextAlignmentLeft; dashboardButton.font = [NSFont systemFontOfSize:14]; dashboardButton.contentTintColor = [NSColor colorWithWhite:0.30 alpha:1];
@@ -935,7 +935,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1360, 820)
         styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
         backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = @"微信客户激活 Agent";
+    self.window.title = @"微信客户分析 Agent";
     self.window.minSize = NSMakeSize(1180, 720);
     [self.window center];
     NSView *root = self.window.contentView;
@@ -951,7 +951,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         [sidebar.leadingAnchor constraintEqualToAnchor:root.leadingAnchor], [sidebar.topAnchor constraintEqualToAnchor:root.topAnchor],
         [sidebar.bottomAnchor constraintEqualToAnchor:root.bottomAnchor], [sidebar.widthAnchor constraintEqualToConstant:210]
     ]];
-    NSTextField *brand = Label(@"客户 Agent", 19, [NSColor colorWithWhite:0.12 alpha:1], YES);
+    NSTextField *brand = Label(@"微信客户分析 Agent", 19, [NSColor colorWithWhite:0.12 alpha:1], YES);
     NSTextField *tagline = Label(@"DeepSeek", 11, [NSColor colorWithWhite:0.45 alpha:1], NO);
     [sidebar addSubview:brand]; [sidebar addSubview:tagline];
     brand.translatesAutoresizingMaskIntoConstraints = tagline.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1011,7 +1011,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         [content.topAnchor constraintEqualToAnchor:root.topAnchor], [content.bottomAnchor constraintEqualToAnchor:root.bottomAnchor]
     ]];
 
-    NSTextField *title = Label(@"客户 Agent", 21, [NSColor colorWithRed:0.06 green:0.10 blue:0.20 alpha:1], YES);
+    NSTextField *title = Label(@"微信客户分析 Agent", 21, [NSColor colorWithRed:0.06 green:0.10 blue:0.20 alpha:1], YES);
     self.statusLabel = Label(@"就绪", 12, NSColor.systemGreenColor, YES);
     self.agentModelPicker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     self.agentModelPicker.target = self;
@@ -1191,7 +1191,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
             self.agentSendButton.enabled = YES;
             self.agentSendButton.title = @"↑";
             if (status != 0 || ![object[@"leads"] isKindOfClass:NSArray.class]) {
-                self.agentTranscript.string = [NSString stringWithFormat:@"%@\n\n任务失败\n%@", self.agentTranscript.string, [self messageFromEvent:object defaultMessage:(error.localizedDescription ?: @"DeepSeek 客户 Agent 查询失败")]];
+                self.agentTranscript.string = [NSString stringWithFormat:@"%@\n\n任务失败\n%@", self.agentTranscript.string, [self messageFromEvent:object defaultMessage:(error.localizedDescription ?: @"DeepSeek 微信客户分析 Agent 查询失败")]];
                 self.statusLabel.stringValue = @"任务失败";
                 self.statusLabel.textColor = NSColor.systemRedColor;
                 [self.agentTranscript scrollRangeToVisible:NSMakeRange(self.agentTranscript.string.length, 0)];

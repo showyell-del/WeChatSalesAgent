@@ -25,7 +25,7 @@ trap cleanup EXIT
 /usr/bin/ditto --noqtn "$APP_DIR" "$STAGE_DIR/WeChatSalesAgent.app"
 ln -s /Applications "$STAGE_DIR/Applications"
 /usr/bin/hdiutil create \
-  -volname "WeChat Sales Agent" \
+  -volname "微信客户分析 Agent" \
   -srcfolder "$STAGE_DIR" \
   -ov \
   -format UDZO \

@@ -1,4 +1,4 @@
-# 微信客户激活 Agent（内测）
+# 微信客户分析 Agent（内测）
 
 面向 macOS Apple Silicon 的本地桌面工具：读取用户明确连接的微信私聊，通过 DeepSeek 生成可追溯到真实对话证据的线索客户表，并导出 Excel 供经营跟进。
 
