@@ -1,5 +1,7 @@
 import argparse
+import hashlib
 import os
+import subprocess
 
 from .chatlog_client import (
     ChatlogClient,
@@ -15,6 +17,7 @@ from .sync_store import SyncStore
 
 DEFAULT_DB = "runtime/agent_state.sqlite3"
 DEFAULT_CHATLOG_BIN = "chatlog/chatlog-darwin-arm64"
+SQLITE_HEADER = b"SQLite format 3\x00"
 
 
 def select_account_id(account_ids, requested=""):
@@ -31,6 +34,56 @@ def select_account_id(account_ids, requested=""):
             "Select exactly one WeChat account before syncing.",
         )
     return account_ids[0]
+
+
+def remove_invalid_chatlog_cache(data_root, cache_dir=""):
+    cache_dir = cache_dir or os.path.expanduser("~/.chatlog/wcdb_cache")
+    if not os.path.isdir(cache_dir):
+        return 0
+    storage_root = os.path.realpath(os.path.join(str(data_root or ""), "db_storage"))
+    if not data_root or not os.path.isdir(storage_root):
+        raise ChatlogError(
+            "CHATLOG_CACHE_SCOPE_INVALID",
+            "Selected account database directory is unavailable for cache cleanup.",
+        )
+    expected_cache_names = set()
+    for root, _directories, files in os.walk(storage_root):
+        for name in files:
+            if not name.endswith(".db"):
+                continue
+            relative = os.path.relpath(os.path.join(root, name), storage_root).replace(os.sep, "/")
+            expected_cache_names.add(hashlib.md5(relative.encode("utf-8")).hexdigest() + ".db")
+    removed = 0
+    try:
+        entries = list(os.scandir(cache_dir))
+        for entry in entries:
+            if entry.name not in expected_cache_names or not entry.is_file(follow_symlinks=False):
+                continue
+            with open(entry.path, "rb") as handle:
+                header = handle.read(len(SQLITE_HEADER))
+            if header == SQLITE_HEADER:
+                continue
+            open_check = subprocess.run(
+                ["/usr/sbin/lsof", "-t", "--", entry.path],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if open_check.stdout.strip():
+                raise ChatlogError(
+                    "CHATLOG_CACHE_IN_USE",
+                    "Selected account cache is currently in use and cannot be repaired safely.",
+                )
+            for path in (entry.path, entry.path + "-shm", entry.path + "-wal"):
+                if os.path.lexists(path):
+                    os.remove(path)
+            removed += 1
+    except OSError as exc:
+        raise ChatlogError(
+            "CHATLOG_CACHE_CLEANUP_FAILED",
+            "Invalid Chatlog cache could not be removed.",
+        ) from exc
+    return removed
 
 
 def data_root_for_account(db_map, account_id):
@@ -160,27 +213,27 @@ def command_prepare_runtime(args):
                 "WECHAT_ACCOUNT_NOT_FOUND", "Selected WeChat account is not available."
             )
         current = any(bool(item.get("current")) for item in selected)
-        historical = any(
-            item.get("source") == "history" or bool(item.get("work_dir"))
-            for item in selected
-        )
-        action_account = args.account_id if historical else ""
+        action_account = "" if current else args.account_id
         status = runtime.status(action_account)
         if not HEX_KEY.fullmatch(str(status.get("data_key", ""))):
-            if historical or not current:
+            if not current:
                 raise ChatlogError(
                     "HISTORICAL_ACCOUNT_KEY_MISSING",
                     "Selected historical account does not have a saved database key.",
                 )
             runtime.obtain_key("")
         runtime.decompress(args.account_id)
+        removed_cache_files = remove_invalid_chatlog_cache(selected[0].get("data_dir", ""))
         emit(
             event(
                 "runtime_prepare",
                 "passed",
                 "CHATLOG_RUNTIME_PREPARED",
                 "WeChat key and local databases are prepared.",
-                {"account_id": args.account_id},
+                {
+                    "account_id": args.account_id,
+                    "removed_invalid_cache_files": str(removed_cache_files),
+                },
             )
         )
         return 0
@@ -207,8 +260,6 @@ def prepare_account(client, runtime, store, account_id):
             "Selected account does not have a valid database key.",
         )
     KeychainStore().put_and_verify(account_id, data_key)
-    runtime.decompress(account_id)
-    runtime_status = runtime.status(account_id)
     verification = verify_runtime_account(runtime_status, account_id, db_map)
     store.mark_key_verified(account_id, len(verification["verified_databases"]))
     return db_map, root, verification

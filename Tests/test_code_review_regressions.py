@@ -1,4 +1,5 @@
 import json
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,6 +55,7 @@ class CodeReviewRegressionTests(unittest.TestCase):
         self.assertIn('"schema_version": "workspace.v2"', workspace)
         self.assertIn('snapshot.schema_version === "workspace.v2"', workbook)
         self.assertIn('snapshot.schema_version === "agent.query.v1"', workbook)
+        self.assertIn('snapshot.schema_version === "agent.query.v2"', workbook)
 
     def test_successful_agent_query_clears_startup_error_and_publishes_task_result(self):
         source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
@@ -62,8 +64,52 @@ class CodeReviewRegressionTests(unittest.TestCase):
         )[0]
         self.assertIn("self.startupError = nil", agent)
         self.assertIn("[self agentLeadSummary]", agent)
-        self.assertIn('self.statusLabel.stringValue = [NSString stringWithFormat:@"完成 · %lu 位"', agent)
+        self.assertIn('self.statusLabel.stringValue = [NSString stringWithFormat:@"完成 · %@"', agent)
         self.assertIn('object[@"analysis_trace"]', agent)
+        self.assertIn('object[@"answer"]', agent)
+        self.assertIn("self.lastAgentResult = object", agent)
+
+    def test_customer_workspace_uses_hidden_scrollers_and_visible_agent_timeline(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        workspace = source.split("- (void)buildWindow", 1)[1].split(
+            "- (NSInteger)numberOfRowsInTableView", 1
+        )[0]
+        self.assertNotIn(
+            'NSTextField *title = Label(@"微信客户分析 Agent"', workspace
+        )
+        self.assertIn("agentTranscriptScroll.hasVerticalScroller = NO", workspace)
+        self.assertIn("agentTranscriptScroll.hasHorizontalScroller = NO", workspace)
+        self.assertIn("agentInputScroll.hasVerticalScroller = NO", workspace)
+        self.assertIn("agentInputScroll.hasHorizontalScroller = NO", workspace)
+        self.assertIn("agentInputScroll.borderType = NSNoBorder", workspace)
+        self.assertNotIn("准备就绪", source)
+        self.assertIn("NSString *initialStatus = [self startupDetailText]", workspace)
+        self.assertIn(
+            "self.agentSendButton.centerYAnchor constraintEqualToAnchor:composer.centerYAnchor",
+            workspace,
+        )
+        self.assertIn("NSProgressIndicatorStyleSpinning", workspace)
+        self.assertIn("[self.agentActivityIndicator startAnimation:nil]", source)
+        self.assertIn("[self.agentActivityIndicator stopAnimation:nil]", source)
+        self.assertIn("agentProgressTranscriptForQuestion", source)
+        self.assertIn('@"planning", @"title": @"理解任务"', source)
+        self.assertIn('@"retrieval", @"title": @"证据召回"', source)
+        self.assertIn('@"analysis", @"title": @"语义复核"', source)
+        self.assertIn('@"audit", @"title": @"覆盖审计"', source)
+        self.assertIn('@"正在处理这项任务\\n"', source)
+        self.assertIn('@"执行完成\\n"', source)
+
+    def test_agent_composer_return_sends_and_shift_return_inserts_a_newline(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        handler = source.split(
+            "- (BOOL)textView:(NSTextView *)textView doCommandBySelector:", 1
+        )[1].split("- (NSString *)agentLeadSummary", 1)[0]
+        self.assertIn("self.agentInput.hasMarkedText", handler)
+        self.assertIn("@selector(insertNewline:)", handler)
+        self.assertIn("@selector(insertNewlineIgnoringFieldEditor:)", handler)
+        self.assertIn("NSEventModifierFlagShift", handler)
+        self.assertIn("[self askCustomerAgent:textView]", handler)
+        self.assertIn("return YES", handler)
 
     def test_workspace_rebuild_keeps_a_window_alive(self):
         source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
@@ -81,7 +127,7 @@ class CodeReviewRegressionTests(unittest.TestCase):
             'buttonWithTitle:@"▦  仪表盘" target:self action:@selector(openAnalyticsDashboard:)',
             source,
         )
-        self.assertIn('buttonWithTitle:@"☷  客户表"', source)
+        self.assertIn('buttonWithTitle:@"☷  智能分析"', source)
         message_search = source.split("- (void)openMessageSearch:", 1)[1].split(
             "- (NSDictionary *)loadSnapshotAtPath:", 1
         )[0]
@@ -116,6 +162,90 @@ class CodeReviewRegressionTests(unittest.TestCase):
         self.assertIn("已同步 %@ 个对话，可以开始提问", source)
         self.assertNotIn("这些聊天不会被预先标记或批量分析", source)
 
+    def test_smart_analysis_tools_are_fixed_to_the_sidebar_bottom(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        workspace = source.split("- (void)buildWindow", 1)[1].split(
+            "- (NSInteger)numberOfRowsInTableView", 1
+        )[0]
+        self.assertIn(
+            "self.sipStatusLabel.bottomAnchor constraintEqualToAnchor:sidebar.bottomAnchor constant:-22",
+            workspace,
+        )
+        self.assertIn(
+            "connectButton.bottomAnchor constraintEqualToAnchor:sipButton.topAnchor constant:-8",
+            workspace,
+        )
+        self.assertNotIn(
+            "connectButton.topAnchor constraintEqualToAnchor:customerButton.bottomAnchor",
+            workspace,
+        )
+
+    def test_smart_analysis_export_uses_task_specific_sheets(self):
+        source = (ROOT / "scripts/build_lead_workbook.mjs").read_text(encoding="utf-8")
+        for task_type, sheet_name in (
+            ("customer_search", "客户清单"),
+            ("opportunity_analysis", "机会清单"),
+            ("reengagement_analysis", "激活建议"),
+            ("customer_risk", "风险清单"),
+            ("commitment_tracker", "承诺待办"),
+            ("person_profile", "人物画像"),
+            ("relationship_insight", "关系洞察"),
+            ("comparison", "多人比较"),
+            ("topic_analysis", "话题分析"),
+            ("timeline", "事件时间线"),
+            ("general_search", "相关结果"),
+        ):
+            self.assertIn(f'{task_type}: "{sheet_name}"', source)
+        self.assertIn('workbook.worksheets.add("证据明细")', source)
+        app = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        self.assertIn('@"导出报告"', app)
+        self.assertIn('@"Excel 工作簿", @"PDF 报告", @"文字摘要"', app)
+        self.assertIn('reportOptions[@"include_statistics"]', app)
+        self.assertIn('reportOptions[@"include_evidence"]', app)
+        self.assertIn('@"证据明细\\n"', app)
+
+    def test_saved_analysis_loads_the_result_and_refreshes_only_new_messages(self):
+        app = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        refresh = app.split("- (void)refreshSelectedAnalysis:", 1)[1].split(
+            "- (NSString *)currentDBPath", 1
+        )[0]
+        self.assertIn('@"--refresh-saved", savedID', refresh)
+        self.assertIn("BOOL unchanged", refresh)
+        self.assertIn("applySavedAnalysis:object", refresh)
+        self.assertIn("没有相关新消息", refresh)
+        self.assertIn('@"--load-saved", savedID', app)
+        self.assertIn('@selector(loadSelectedAnalysis:)', app)
+        self.assertIn('@selector(deleteSelectedAnalysis:)', app)
+        store = (ROOT / "agent_core/analysis_store.py").read_text(encoding="utf-8")
+        self.assertIn("_account_corpus_watermark", store)
+        self.assertIn("coalesce(max(timestamp),0) AS watermark", store)
+
+    def test_review_fixes_keep_ui_work_off_the_main_thread_and_chat_out_of_temp_files(self):
+        app = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        self.assertIn('dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0)', app)
+        self.assertIn('@"正在构建完整历史分析语料…"', app)
+        self.assertIn('@"--all-history"', app)
+        self.assertNotIn('stringByAppendingPathComponent:[NSString stringWithFormat:@"wechat-leads-', app)
+        self.assertIn('task.arguments = @[[resourcePath stringByAppendingPathComponent:@"Export/build_lead_workbook.mjs"], @"-", outputPath]', app)
+        self.assertIn('rangeOfString:@"\\n\\n" options:NSBackwardsSearch', app)
+
+    def test_task_specific_exports_do_not_reuse_customer_intent_columns(self):
+        source = (ROOT / "scripts/build_lead_workbook.mjs").read_text(encoding="utf-8")
+        self.assertIn('snapshot.task_type === "opportunity_analysis"', source)
+        self.assertIn('"机会强度", "机会阶段"', source)
+        self.assertIn('snapshot.task_type === "reengagement_analysis"', source)
+        self.assertIn('"激活优先级", "触达建议"', source)
+        self.assertIn('snapshot.task_type === "customer_risk"', source)
+        self.assertIn('"风险严重度", "风险等级"', source)
+        self.assertIn('[["置信度", "支持证据", "反例证据"]]', source)
+        self.assertIn('"支持证据", "反例证据"', source)
+        self.assertIn('detailDateColumn = "E"', source)
+        self.assertIn('detailDateColumn = "I"', source)
+        self.assertIn('detailDateColumn = "F"', source)
+        self.assertIn('detailDateColumn = "H"', source)
+        self.assertIn('format.numberFormat = "yyyy-mm-dd hh:mm"', source)
+        self.assertIn('snapshotPath !== "-"', source)
+
     def test_chatlog_health_requires_owned_listener_process(self):
         source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
         connect = source.split("- (void)connectWeChatData:", 1)[1].split(
@@ -145,6 +275,14 @@ class CodeReviewRegressionTests(unittest.TestCase):
             connect.index('prepare-runtime'),
             connect.index('startChatlogServiceForAccount:selectedAccountID'),
         )
+
+    def test_app_environment_always_exposes_required_macos_process_tools(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        environment = source.split("- (NSMutableDictionary *)agentEnvironment", 1)[1].split(
+            "- (NSData *)drainPipe:", 1
+        )[0]
+        self.assertIn("/usr/sbin:/sbin", environment)
+        self.assertNotIn("inheritedPath", environment)
 
     def test_account_selection_is_bound_through_http_and_sync(self):
         source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
@@ -272,12 +410,25 @@ class CodeReviewRegressionTests(unittest.TestCase):
         self.assertIn("verify_build_inputs.py", build)
         self.assertIn('pydantic.VERSION == "2.12.5"', build)
 
+    def test_app_icon_master_is_rgba_and_uses_standard_canvas(self):
+        icon = (ROOT / "app/Phase0App/WeChatCustomerAnalysisIcon.png").read_bytes()
+        self.assertEqual(icon[:8], b"\x89PNG\r\n\x1a\n")
+        width, height = struct.unpack(">II", icon[16:24])
+        self.assertEqual((width, height), (1024, 1024))
+        self.assertEqual(icon[25], 6)
+        self.assertTrue((ROOT / "app/Phase0App/WeChatCustomerAnalysisArtwork.png").is_file())
+        self.assertTrue((ROOT / "scripts/prepare_app_icon.m").is_file())
+
     def test_chatlog_license_and_release_cleanup_are_required(self):
         build = (ROOT / "scripts/build_phase0_app.sh").read_text(encoding="utf-8")
         dmg = (ROOT / "scripts/build_dmg.sh").read_text(encoding="utf-8")
         self.assertIn('cp chatlog/LICENSE "$RESOURCES_DIR/Chatlog/LICENSE"', build)
         self.assertIn(
             'test -f "$MOUNT_DIR/WeChatSalesAgent.app/Contents/Resources/Chatlog/LICENSE"',
+            dmg,
+        )
+        self.assertIn(
+            'cmp app/Phase0App/WeChatCustomerAnalysis.icns "$MOUNT_DIR/WeChatSalesAgent.app/Contents/Resources/WeChatCustomerAnalysis.icns"',
             dmg,
         )
         self.assertIn('rm -rf "$APP_DIR"', dmg)
@@ -288,7 +439,7 @@ class CodeReviewRegressionTests(unittest.TestCase):
 
     def test_workbook_rejects_every_scanned_formula_error(self):
         source = (ROOT / "scripts/build_lead_workbook.mjs").read_text(encoding="utf-8")
-        self.assertIn('["#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A"]', source)
+        self.assertIn('["#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A", "#NUM!", "#NULL!", "#SPILL!", "#CALC!"]', source)
         self.assertIn("formulaErrors.some", source)
 
     def test_phase4_negative_case_uses_isolated_fixture(self):

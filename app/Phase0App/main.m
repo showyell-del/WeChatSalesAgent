@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <CoreText/CoreText.h>
 #include <signal.h>
 
 static void PolishWorkspace(NSView *view) {
@@ -25,7 +26,7 @@ static void PolishWorkspace(NSView *view) {
     }
     if ([view isKindOfClass:NSButton.class]) {
         NSButton *button = (NSButton *)view;
-        NSDictionary *symbols = @{@"▦  仪表盘": @"chart.bar.xaxis", @"☷  客户表": @"person.2", @"≡  消息检索": @"text.magnifyingglass"};
+        NSDictionary *symbols = @{@"▦  仪表盘": @"chart.bar.xaxis", @"☷  智能分析": @"person.2", @"≡  消息检索": @"text.magnifyingglass"};
         NSString *symbol = symbols[button.title];
         if (symbol) {
             button.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
@@ -59,6 +60,130 @@ static NSTextField *Label(NSString *text, CGFloat size, NSColor *color, BOOL bol
     field.textColor = color;
     field.lineBreakMode = NSLineBreakByTruncatingTail;
     return field;
+}
+
+static void AppendAgentText(NSMutableAttributedString *target, NSString *text, NSFont *font, NSColor *color, CGFloat spacing) {
+    NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
+    paragraph.lineSpacing = 3;
+    paragraph.paragraphSpacing = spacing;
+    [target appendAttributedString:[[NSAttributedString alloc] initWithString:text attributes:@{
+        NSFontAttributeName: font,
+        NSForegroundColorAttributeName: color,
+        NSParagraphStyleAttributeName: paragraph,
+    }]];
+}
+
+static void AppendEvidenceLink(NSMutableAttributedString *target, NSString *label, NSString *evidenceID) {
+    if (!evidenceID.length) return;
+    NSString *text = [NSString stringWithFormat:@"%@  ", label];
+    NSURL *URL = [NSURL URLWithString:[NSString stringWithFormat:@"evidence://%@", evidenceID]];
+    [target appendAttributedString:[[NSAttributedString alloc] initWithString:text attributes:@{
+        NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: NSColor.systemBlueColor,
+        NSLinkAttributeName: URL,
+        NSUnderlineStyleAttributeName: @(NSUnderlineStyleNone),
+    }]];
+}
+
+static BOOL WriteAnalysisPDF(NSDictionary *snapshot, NSString *path, NSDictionary *options) {
+    NSMutableAttributedString *document = [[NSMutableAttributedString alloc] init];
+    void (^append)(NSString *, CGFloat, NSFontWeight, NSColor *, CGFloat) = ^(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color, CGFloat spacing) {
+        NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
+        paragraph.lineSpacing = 3; paragraph.paragraphSpacing = spacing * 0.65;
+        [document appendAttributedString:[[NSAttributedString alloc] initWithString:text ?: @"" attributes:@{
+            NSFontAttributeName: [NSFont systemFontOfSize:size weight:weight],
+            NSForegroundColorAttributeName: color ?: NSColor.blackColor,
+            NSParagraphStyleAttributeName: paragraph,
+        }]];
+    };
+    append([NSString stringWithFormat:@"%@\n", snapshot[@"result_title"] ?: @"智能分析报告"], 24, NSFontWeightBold, [NSColor colorWithRed:0.09 green:0.15 blue:0.33 alpha:1], 8);
+    NSString *generatedAt = [NSDateFormatter localizedStringFromDate:NSDate.date dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle];
+    append([NSString stringWithFormat:@"分析任务：%@\n生成时间：%@\n\n", snapshot[@"query"] ?: @"", generatedAt], 10, NSFontWeightRegular, NSColor.secondaryLabelColor, 8);
+    append(@"核心回答\n", 15, NSFontWeightSemibold, NSColor.blackColor, 4);
+    append([NSString stringWithFormat:@"%@\n\n", snapshot[@"answer"] ?: @""], 12, NSFontWeightRegular, [NSColor colorWithWhite:0.18 alpha:1], 10);
+    for (NSDictionary *section in [snapshot[@"sections"] isKindOfClass:NSArray.class] ? snapshot[@"sections"] : @[]) {
+        append([NSString stringWithFormat:@"%@ · 置信度 %@%%\n", section[@"title"] ?: @"分析", section[@"confidence"] ?: @0], 14, NSFontWeightSemibold, NSColor.blackColor, 3);
+        append([NSString stringWithFormat:@"%@\n", section[@"content"] ?: @""], 11, NSFontWeightRegular, [NSColor colorWithWhite:0.2 alpha:1], 4);
+        if ([options[@"include_evidence"] boolValue]) append([NSString stringWithFormat:@"支持证据：%@\n反例证据：%@\n\n", [section[@"evidence_ids"] componentsJoinedByString:@"、"] ?: @"", [section[@"counter_evidence_ids"] componentsJoinedByString:@"、"] ?: @""], 9, NSFontWeightRegular, NSColor.secondaryLabelColor, 6);
+        else append(@"\n", 8, NSFontWeightRegular, NSColor.blackColor, 2);
+    }
+    NSArray *items = [snapshot[@"structured_items"] isKindOfClass:NSArray.class] ? snapshot[@"structured_items"] : @[];
+    if (items.count) {
+        append(@"时间线与待办\n", 15, NSFontWeightSemibold, NSColor.blackColor, 5);
+        for (NSDictionary *item in items) append([NSString stringWithFormat:@"• %@  %@  %@  %@\n", item[@"date"] ?: @"", item[@"status"] ?: @"", item[@"subject"] ?: @"", item[@"content"] ?: @""], 11, NSFontWeightRegular, [NSColor colorWithWhite:0.2 alpha:1], 3);
+        append(@"\n", 8, NSFontWeightRegular, NSColor.blackColor, 4);
+    }
+    if ([options[@"include_statistics"] boolValue]) {
+        append(@"互动统计\n", 15, NSFontWeightSemibold, NSColor.blackColor, 5);
+        for (NSDictionary *lead in [snapshot[@"leads"] isKindOfClass:NSArray.class] ? snapshot[@"leads"] : @[]) {
+            NSDictionary *stats = [lead[@"conversation_stats"] isKindOfClass:NSDictionary.class] ? lead[@"conversation_stats"] : @{};
+            append([NSString stringWithFormat:@"%@：共 %@ 条（对方 %@ / 我方 %@），%@ 个活跃日，对方中位回复 %@ 分钟，我方中位回复 %@ 分钟\n", lead[@"display_name"] ?: @"联系人", stats[@"message_count"] ?: @0, stats[@"incoming_count"] ?: @0, stats[@"outgoing_count"] ?: @0, stats[@"active_days"] ?: @0, stats[@"their_median_response_minutes"] ?: @"—", stats[@"my_median_response_minutes"] ?: @"—"], 10, NSFontWeightRegular, [NSColor colorWithWhite:0.2 alpha:1], 3);
+        }
+        append(@"\n", 8, NSFontWeightRegular, NSColor.blackColor, 4);
+    }
+    if ([options[@"include_evidence"] boolValue]) {
+        append(@"证据明细\n", 15, NSFontWeightSemibold, NSColor.blackColor, 5);
+        NSMutableSet *seen = [NSMutableSet set];
+        for (NSDictionary *lead in [snapshot[@"leads"] isKindOfClass:NSArray.class] ? snapshot[@"leads"] : @[]) {
+            for (NSDictionary *evidence in [lead[@"evidence"] isKindOfClass:NSArray.class] ? lead[@"evidence"] : @[]) {
+                if ([seen containsObject:evidence[@"evidence_id"] ?: @""]) continue;
+                [seen addObject:evidence[@"evidence_id"] ?: @""];
+                append([NSString stringWithFormat:@"%@  %@  [%@] %@\n%@\n\n", evidence[@"evidence_id"] ?: @"", evidence[@"time"] ?: @"", evidence[@"direction"] ?: @"", evidence[@"sender"] ?: @"", evidence[@"content"] ?: @""], 9, NSFontWeightRegular, [NSColor colorWithWhite:0.25 alpha:1], 4);
+            }
+        }
+    }
+    NSArray *limitations = [snapshot[@"limitations"] isKindOfClass:NSArray.class] ? snapshot[@"limitations"] : @[];
+    if (limitations.count) {
+        append(@"边界说明\n", 13, NSFontWeightSemibold, NSColor.blackColor, 4);
+        for (NSString *item in limitations) append([NSString stringWithFormat:@"• %@\n", item], 10, NSFontWeightRegular, NSColor.secondaryLabelColor, 2);
+    }
+    if ([options[@"include_followups"] boolValue]) {
+        NSArray *followups = [snapshot[@"suggested_followups"] isKindOfClass:NSArray.class] ? snapshot[@"suggested_followups"] : @[];
+        if (followups.count) {
+            append(@"\n可继续分析\n", 13, NSFontWeightSemibold, NSColor.blackColor, 4);
+            for (NSUInteger index = 0; index < followups.count; index += 1) append([NSString stringWithFormat:@"%lu. %@\n", (unsigned long)index + 1, followups[index]], 10, NSFontWeightRegular, [NSColor colorWithWhite:0.25 alpha:1], 2);
+        }
+    }
+    NSURL *URL = [NSURL fileURLWithPath:path];
+    CGRect mediaBox = CGRectMake(0, 0, 595, 842);
+    CGDataConsumerRef consumer = CGDataConsumerCreateWithURL((__bridge CFURLRef)URL);
+    if (!consumer) return NO;
+    CGContextRef context = CGPDFContextCreate(consumer, &mediaBox, NULL);
+    CGDataConsumerRelease(consumer);
+    if (!context) return NO;
+    CTFramesetterRef framesetter = CTFramesetterCreateWithAttributedString((__bridge CFAttributedStringRef)document);
+    CFIndex location = 0;
+    NSInteger page = 1;
+    while (location < document.length) {
+        CGPDFContextBeginPage(context, NULL);
+        CGMutablePathRef pathRef = CGPathCreateMutable();
+        CGPathAddRect(pathRef, NULL, CGRectMake(48, 28, 499, 790));
+        CTFrameRef frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(location, 0), pathRef, NULL);
+        CFRange visible = CTFrameGetVisibleStringRange(frame);
+        if (location + visible.length < document.length && visible.length > 0) {
+            NSRange visibleRange = NSMakeRange((NSUInteger)location, (NSUInteger)visible.length);
+            NSRange boundary = [document.string rangeOfString:@"\n\n" options:NSBackwardsSearch range:visibleRange];
+            CFIndex boundaryEnd = boundary.location == NSNotFound ? 0 : (CFIndex)NSMaxRange(boundary);
+            if (boundaryEnd > location + visible.length / 4) {
+                CFRelease(frame);
+                frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(location, boundaryEnd - location), pathRef, NULL);
+                visible = CTFrameGetVisibleStringRange(frame);
+            }
+        }
+        CTFrameDraw(frame, context);
+        NSString *footer = [NSString stringWithFormat:@"微信客户分析 Agent · %ld", (long)page++];
+        [NSGraphicsContext saveGraphicsState];
+        [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithCGContext:context flipped:NO]];
+        [footer drawAtPoint:NSMakePoint(48, 10) withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:8], NSForegroundColorAttributeName:NSColor.secondaryLabelColor}];
+        [NSGraphicsContext restoreGraphicsState];
+        CFRelease(frame); CGPathRelease(pathRef);
+        CGPDFContextEndPage(context);
+        if (visible.length <= 0) break;
+        location += visible.length;
+    }
+    CFRelease(framesetter); CGPDFContextClose(context); CGContextRelease(context);
+    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    return [attributes fileSize] > 0;
 }
 
 static NSView *Card(NSString *title, NSString *value, NSColor *accent) {
@@ -220,6 +345,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 @property NSDictionary *snapshot;
 @property NSArray<NSDictionary *> *allLeads;
 @property NSArray<NSDictionary *> *visibleLeads;
+@property NSDictionary *lastAgentResult;
 @property NSWindow *window;
 @property NSTextView *agentTranscript;
 @property AgentComposerTextView *agentInput;
@@ -227,7 +353,12 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 @property NSTextField *statusLabel;
 @property NSTextField *sipStatusLabel;
 @property NSButton *agentSendButton;
+@property NSProgressIndicator *agentActivityIndicator;
 @property AgentPlaceholderLabel *agentPlaceholderLabel;
+@property NSPopUpButton *analysisModePicker;
+@property NSPopUpButton *savedAnalysisPicker;
+@property NSString *agentSessionID;
+@property NSAttributedString *priorAgentTranscript;
 @property NSString *lastAgentQuestion;
 @property NSString *snapshotPath;
 @property NSString *startupError;
@@ -290,8 +421,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     NSString *resourcePath = [NSBundle mainBundle].resourcePath;
     NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
     NSString *runtimeBin = [resourcePath stringByAppendingPathComponent:@"PythonRuntime/bin"];
-    NSString *inheritedPath = environment[@"PATH"] ?: @"/usr/bin:/bin";
-    environment[@"PATH"] = [NSString stringWithFormat:@"%@:%@", runtimeBin, inheritedPath];
+    environment[@"PATH"] = [NSString stringWithFormat:@"%@:/usr/bin:/bin:/usr/sbin:/sbin", runtimeBin];
     environment[@"PYTHONHOME"] = [resourcePath stringByAppendingPathComponent:@"PythonRuntime"];
     environment[@"PYTHONPATH"] = [resourcePath stringByAppendingPathComponent:@"Python"];
     return environment;
@@ -475,13 +605,13 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 - (void)showCustomerWorkspace:(id)sender {
     (void)sender;
     if (!self.showingMessageSearch && !self.showingAnalyticsDashboard) {
-        self.statusLabel.stringValue = @"已在客户表";
+        self.statusLabel.stringValue = @"已在智能分析";
         self.statusLabel.textColor = NSColor.systemGreenColor;
         return;
     }
     self.showingMessageSearch = NO;
     self.showingAnalyticsDashboard = NO;
-    [self rebuildWorkspaceWithMessage:@"已返回客户表" color:NSColor.systemGreenColor];
+    [self rebuildWorkspaceWithMessage:@"已返回智能分析" color:NSColor.systemGreenColor];
 }
 
 - (void)renderDashboardGroupCards {
@@ -592,7 +722,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     NSView *sidebar = [[NSView alloc] initWithFrame:NSZeroRect]; sidebar.wantsLayer = YES; sidebar.layer.backgroundColor = [NSColor colorWithWhite:0.965 alpha:1].CGColor;
     NSTextField *brand = Label(@"客户研究", 19, [NSColor colorWithWhite:0.12 alpha:1], YES); NSTextField *tagline = Label(@"DeepSeek Agent", 11, [NSColor colorWithWhite:0.45 alpha:1], NO);
     NSButton *dashboardButton = [NSButton buttonWithTitle:@"▦  仪表盘" target:nil action:nil]; dashboardButton.bordered = NO; dashboardButton.alignment = NSTextAlignmentLeft; dashboardButton.font = [NSFont boldSystemFontOfSize:14]; dashboardButton.contentTintColor = [NSColor colorWithWhite:0.12 alpha:1]; dashboardButton.wantsLayer = YES; dashboardButton.layer.backgroundColor = [NSColor colorWithWhite:0.89 alpha:1].CGColor; dashboardButton.layer.cornerRadius = 8;
-    NSButton *customerButton = [NSButton buttonWithTitle:@"☷  客户表" target:self action:@selector(showCustomerWorkspace:)]; customerButton.bordered = NO; customerButton.alignment = NSTextAlignmentLeft; customerButton.font = [NSFont systemFontOfSize:14]; customerButton.contentTintColor = [NSColor colorWithWhite:0.30 alpha:1];
+    NSButton *customerButton = [NSButton buttonWithTitle:@"☷  智能分析" target:self action:@selector(showCustomerWorkspace:)]; customerButton.bordered = NO; customerButton.alignment = NSTextAlignmentLeft; customerButton.font = [NSFont systemFontOfSize:14]; customerButton.contentTintColor = [NSColor colorWithWhite:0.30 alpha:1];
     NSButton *messageButton = [NSButton buttonWithTitle:@"≡  消息检索" target:self action:@selector(openMessageSearch:)]; messageButton.bordered = NO; messageButton.alignment = NSTextAlignmentLeft; messageButton.font = [NSFont systemFontOfSize:14]; messageButton.contentTintColor = [NSColor colorWithWhite:0.30 alpha:1];
     NSTextField *privacy = Label(@"原始聊天仅在本机统计", 11, [NSColor colorWithWhite:0.55 alpha:1], NO);
     for (NSView *view in @[brand, tagline, dashboardButton, customerButton, messageButton, privacy]) { [sidebar addSubview:view]; view.translatesAutoresizingMaskIntoConstraints = NO; } [root addSubview:sidebar]; sidebar.translatesAutoresizingMaskIntoConstraints = NO;
@@ -693,7 +823,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     NSTextField *tagline = Label(@"DeepSeek", 11, [NSColor colorWithWhite:0.45 alpha:1], NO);
     NSButton *dashboardButton = [NSButton buttonWithTitle:@"▦  仪表盘" target:self action:@selector(openAnalyticsDashboard:)];
     dashboardButton.bordered = NO; dashboardButton.alignment = NSTextAlignmentLeft; dashboardButton.font = [NSFont systemFontOfSize:14]; dashboardButton.contentTintColor = [NSColor colorWithWhite:0.30 alpha:1];
-    NSButton *customerButton = [NSButton buttonWithTitle:@"☷  客户表" target:self action:@selector(showCustomerWorkspace:)];
+    NSButton *customerButton = [NSButton buttonWithTitle:@"☷  智能分析" target:self action:@selector(showCustomerWorkspace:)];
     customerButton.bordered = NO; customerButton.alignment = NSTextAlignmentLeft; customerButton.font = [NSFont systemFontOfSize:14]; customerButton.contentTintColor = [NSColor colorWithWhite:0.30 alpha:1];
     NSButton *messageButton = [NSButton buttonWithTitle:@"≡  消息检索" target:nil action:nil];
     messageButton.bordered = NO; messageButton.alignment = NSTextAlignmentLeft; messageButton.font = [NSFont boldSystemFontOfSize:14]; messageButton.contentTintColor = [NSColor colorWithWhite:0.12 alpha:1]; messageButton.wantsLayer = YES; messageButton.layer.backgroundColor = [NSColor colorWithWhite:0.89 alpha:1].CGColor; messageButton.layer.cornerRadius = 8;
@@ -974,7 +1104,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         [messageSearchButton.leadingAnchor constraintEqualToAnchor:sidebar.leadingAnchor constant:18], [messageSearchButton.trailingAnchor constraintEqualToAnchor:sidebar.trailingAnchor constant:-18],
         [messageSearchButton.topAnchor constraintEqualToAnchor:dashboardButton.bottomAnchor constant:4], [messageSearchButton.heightAnchor constraintEqualToConstant:38]
     ]];
-    NSButton *customerButton = [NSButton buttonWithTitle:@"☷  客户表" target:nil action:nil];
+    NSButton *customerButton = [NSButton buttonWithTitle:@"☷  智能分析" target:nil action:nil];
     customerButton.bordered = NO; customerButton.alignment = NSTextAlignmentLeft; customerButton.font = [NSFont boldSystemFontOfSize:14]; customerButton.contentTintColor = [NSColor colorWithWhite:0.12 alpha:1]; customerButton.wantsLayer = YES; customerButton.layer.backgroundColor = [NSColor colorWithWhite:0.89 alpha:1].CGColor; customerButton.layer.cornerRadius = 8;
     [sidebar addSubview:customerButton]; customerButton.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[[customerButton.leadingAnchor constraintEqualToAnchor:sidebar.leadingAnchor constant:14], [customerButton.trailingAnchor constraintEqualToAnchor:sidebar.trailingAnchor constant:-14], [customerButton.topAnchor constraintEqualToAnchor:messageSearchButton.bottomAnchor constant:4], [customerButton.heightAnchor constraintEqualToConstant:42]]];
@@ -998,10 +1128,12 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     sipButton.translatesAutoresizingMaskIntoConstraints = NO; self.sipStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
         [connectButton.leadingAnchor constraintEqualToAnchor:sidebar.leadingAnchor constant:18], [connectButton.trailingAnchor constraintEqualToAnchor:sidebar.trailingAnchor constant:-18],
-        [connectButton.topAnchor constraintEqualToAnchor:customerButton.bottomAnchor constant:10], [connectButton.heightAnchor constraintEqualToConstant:30],
+        [connectButton.heightAnchor constraintEqualToConstant:30],
         [sipButton.leadingAnchor constraintEqualToAnchor:connectButton.leadingAnchor], [sipButton.trailingAnchor constraintEqualToAnchor:connectButton.trailingAnchor],
-        [sipButton.topAnchor constraintEqualToAnchor:connectButton.bottomAnchor constant:8], [sipButton.heightAnchor constraintEqualToConstant:30],
-        [self.sipStatusLabel.leadingAnchor constraintEqualToAnchor:connectButton.leadingAnchor constant:4], [self.sipStatusLabel.topAnchor constraintEqualToAnchor:sipButton.bottomAnchor constant:7]
+        [sipButton.bottomAnchor constraintEqualToAnchor:self.sipStatusLabel.topAnchor constant:-9], [sipButton.heightAnchor constraintEqualToConstant:30],
+        [connectButton.bottomAnchor constraintEqualToAnchor:sipButton.topAnchor constant:-8],
+        [self.sipStatusLabel.leadingAnchor constraintEqualToAnchor:connectButton.leadingAnchor constant:4],
+        [self.sipStatusLabel.bottomAnchor constraintEqualToAnchor:sidebar.bottomAnchor constant:-22]
     ]];
     [self updateSIPStatusLabel:[self isSIPDisabled]];
     NSView *content = [[NSView alloc] initWithFrame:NSZeroRect];
@@ -1011,22 +1143,46 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         [content.topAnchor constraintEqualToAnchor:root.topAnchor], [content.bottomAnchor constraintEqualToAnchor:root.bottomAnchor]
     ]];
 
-    NSTextField *title = Label(@"微信客户分析 Agent", 21, [NSColor colorWithRed:0.06 green:0.10 blue:0.20 alpha:1], YES);
-    self.statusLabel = Label(@"就绪", 12, NSColor.systemGreenColor, YES);
+    NSString *initialStatus = [self startupDetailText];
+    BOOL accountReady = ![initialStatus isEqualToString:@"请先连接微信。"];
+    self.statusLabel = Label(initialStatus, 12, accountReady ? NSColor.systemGreenColor : NSColor.systemOrangeColor, YES);
+    self.agentActivityIndicator = [[NSProgressIndicator alloc] initWithFrame:NSZeroRect];
+    self.agentActivityIndicator.style = NSProgressIndicatorStyleSpinning;
+    self.agentActivityIndicator.controlSize = NSControlSizeSmall;
+    self.agentActivityIndicator.indeterminate = YES;
+    self.agentActivityIndicator.displayedWhenStopped = NO;
+    self.agentActivityIndicator.hidden = YES;
     self.agentModelPicker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     self.agentModelPicker.target = self;
     self.agentModelPicker.action = @selector(selectAgentModel:);
     self.agentModelPicker.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightMedium];
     [self setAgentModelOptions:@[@"deepseek-v4-flash", @"deepseek-v4-pro", @"deepseek-v4-flash-vision-exp"] selected:[self storedAgentModel]];
-    NSButton *exportButton = [NSButton buttonWithTitle:@"导出 Excel" target:self action:@selector(exportWorkbook:)];
+    NSButton *newButton = [NSButton buttonWithTitle:@"新分析" target:self action:@selector(newAgentAnalysis:)];
+    NSButton *saveButton = [NSButton buttonWithTitle:@"保存" target:self action:@selector(saveCurrentAnalysis:)];
+    self.savedAnalysisPicker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    [self.savedAnalysisPicker addItemWithTitle:@"已保存分析"];
+    self.savedAnalysisPicker.target = self;
+    self.savedAnalysisPicker.action = @selector(loadSelectedAnalysis:);
+    NSButton *refreshButton = [NSButton buttonWithTitle:@"检查更新" target:self action:@selector(refreshSelectedAnalysis:)];
+    NSButton *deleteButton = [NSButton buttonWithTitle:@"删除" target:self action:@selector(deleteSelectedAnalysis:)];
+    NSButton *exportButton = [NSButton buttonWithTitle:@"导出报告" target:self action:@selector(exportWorkbook:)];
     exportButton.bezelStyle = NSBezelStyleTexturedRounded;
     exportButton.contentTintColor = NSColor.systemBlueColor;
-    [content addSubview:title]; [content addSubview:self.statusLabel]; [content addSubview:exportButton];
-    for (NSView *view in @[title, self.statusLabel, exportButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:newButton]; [content addSubview:saveButton]; [content addSubview:self.savedAnalysisPicker]; [content addSubview:refreshButton]; [content addSubview:deleteButton];
+    [content addSubview:self.agentActivityIndicator]; [content addSubview:self.statusLabel]; [content addSubview:exportButton];
+    for (NSView *view in @[newButton, saveButton, self.savedAnalysisPicker, refreshButton, deleteButton, self.agentActivityIndicator, self.statusLabel, exportButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
-        [title.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:28], [title.topAnchor constraintEqualToAnchor:content.topAnchor constant:24],
-        [exportButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-28], [exportButton.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
-        [self.statusLabel.trailingAnchor constraintEqualToAnchor:exportButton.leadingAnchor constant:-18], [self.statusLabel.centerYAnchor constraintEqualToAnchor:title.centerYAnchor]
+        [newButton.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:28], [newButton.centerYAnchor constraintEqualToAnchor:exportButton.centerYAnchor],
+        [saveButton.leadingAnchor constraintEqualToAnchor:newButton.trailingAnchor constant:8], [saveButton.centerYAnchor constraintEqualToAnchor:newButton.centerYAnchor],
+        [self.savedAnalysisPicker.leadingAnchor constraintEqualToAnchor:saveButton.trailingAnchor constant:8], [self.savedAnalysisPicker.centerYAnchor constraintEqualToAnchor:newButton.centerYAnchor], [self.savedAnalysisPicker.widthAnchor constraintEqualToConstant:150],
+        [refreshButton.leadingAnchor constraintEqualToAnchor:self.savedAnalysisPicker.trailingAnchor constant:8], [refreshButton.centerYAnchor constraintEqualToAnchor:newButton.centerYAnchor],
+        [deleteButton.leadingAnchor constraintEqualToAnchor:refreshButton.trailingAnchor constant:6], [deleteButton.centerYAnchor constraintEqualToAnchor:newButton.centerYAnchor],
+        [exportButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-28], [exportButton.topAnchor constraintEqualToAnchor:content.topAnchor constant:22],
+        [self.statusLabel.trailingAnchor constraintEqualToAnchor:exportButton.leadingAnchor constant:-18], [self.statusLabel.centerYAnchor constraintEqualToAnchor:exportButton.centerYAnchor],
+        [self.statusLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:deleteButton.trailingAnchor constant:12],
+        [self.statusLabel.widthAnchor constraintLessThanOrEqualToConstant:360],
+        [self.agentActivityIndicator.trailingAnchor constraintEqualToAnchor:self.statusLabel.leadingAnchor constant:-8], [self.agentActivityIndicator.centerYAnchor constraintEqualToAnchor:self.statusLabel.centerYAnchor],
+        [self.agentActivityIndicator.widthAnchor constraintEqualToConstant:14], [self.agentActivityIndicator.heightAnchor constraintEqualToConstant:14]
     ]];
 
     PolishWorkspace(root);
@@ -1037,17 +1193,19 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     [content addSubview:taskSurface]; taskSurface.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
         [taskSurface.leadingAnchor constraintEqualToAnchor:content.leadingAnchor], [taskSurface.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
-        [taskSurface.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:12], [taskSurface.bottomAnchor constraintEqualToAnchor:content.bottomAnchor]
+        [taskSurface.topAnchor constraintEqualToAnchor:content.topAnchor constant:58], [taskSurface.bottomAnchor constraintEqualToAnchor:content.bottomAnchor]
     ]];
 
     self.agentTranscript = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 760, 440)];
-    self.agentTranscript.editable = NO; self.agentTranscript.selectable = YES; self.agentTranscript.verticallyResizable = YES;
+    self.agentTranscript.editable = NO; self.agentTranscript.selectable = YES; self.agentTranscript.verticallyResizable = YES; self.agentTranscript.delegate = self;
+    self.agentTranscript.linkTextAttributes = @{NSForegroundColorAttributeName: NSColor.systemBlueColor, NSUnderlineStyleAttributeName: @(NSUnderlineStyleNone)};
     self.agentTranscript.textContainer.widthTracksTextView = YES; self.agentTranscript.font = [NSFont systemFontOfSize:14];
     self.agentTranscript.drawsBackground = NO; self.agentTranscript.textColor = [NSColor colorWithWhite:0.14 alpha:1];
-    self.agentTranscript.textContainerInset = NSMakeSize(18, 18);
+    self.agentTranscript.textContainerInset = NSMakeSize(24, 22);
     self.agentTranscript.string = @"";
     NSScrollView *agentTranscriptScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
-    agentTranscriptScroll.documentView = self.agentTranscript; agentTranscriptScroll.hasVerticalScroller = YES;
+    agentTranscriptScroll.documentView = self.agentTranscript; agentTranscriptScroll.hasVerticalScroller = NO; agentTranscriptScroll.hasHorizontalScroller = NO;
+    agentTranscriptScroll.autohidesScrollers = YES; agentTranscriptScroll.scrollerStyle = NSScrollerStyleOverlay;
     agentTranscriptScroll.drawsBackground = NO; agentTranscriptScroll.borderType = NSNoBorder;
 
     NSView *composer = [[NSView alloc] initWithFrame:NSZeroRect];
@@ -1059,19 +1217,33 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     self.agentInput.delegate = self; self.agentInput.drawsBackground = YES; self.agentInput.backgroundColor = [NSColor colorWithWhite:0.985 alpha:1]; self.agentInput.textColor = [NSColor colorWithWhite:0.12 alpha:1];
     self.agentInput.textContainerInset = NSMakeSize(14, 14);
     NSScrollView *agentInputScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
-    agentInputScroll.documentView = self.agentInput; agentInputScroll.drawsBackground = YES; agentInputScroll.backgroundColor = [NSColor colorWithWhite:0.985 alpha:1]; agentInputScroll.hasVerticalScroller = YES;
+    agentInputScroll.documentView = self.agentInput; agentInputScroll.drawsBackground = YES; agentInputScroll.backgroundColor = [NSColor colorWithWhite:0.985 alpha:1];
+    agentInputScroll.hasVerticalScroller = NO; agentInputScroll.hasHorizontalScroller = NO; agentInputScroll.autohidesScrollers = YES;
+    agentInputScroll.scrollerStyle = NSScrollerStyleOverlay; agentInputScroll.borderType = NSNoBorder;
     self.agentPlaceholderLabel = [[AgentPlaceholderLabel alloc] initWithFrame:NSZeroRect];
     self.agentPlaceholderLabel.stringValue = @"描述要查找的人或对话";
     self.agentPlaceholderLabel.font = [NSFont systemFontOfSize:15]; self.agentPlaceholderLabel.textColor = [NSColor colorWithWhite:0.52 alpha:1];
     self.agentPlaceholderLabel.editable = NO; self.agentPlaceholderLabel.selectable = NO; self.agentPlaceholderLabel.bezeled = NO; self.agentPlaceholderLabel.drawsBackground = NO;
     NSButton *connectionButton = [NSButton buttonWithTitle:@"连接" target:self action:@selector(saveDeepSeekKey:)];
     connectionButton.bordered = NO; connectionButton.font = [NSFont systemFontOfSize:12]; connectionButton.contentTintColor = [NSColor colorWithWhite:0.38 alpha:1];
+    self.analysisModePicker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    NSArray<NSArray<NSString *> *> *analysisModes = @[
+        @[@"自动分析", @""], @[@"客户筛选", @"customer_search"], @[@"成交机会", @"opportunity_analysis"],
+        @[@"重新激活", @"reengagement_analysis"], @[@"客户风险", @"customer_risk"], @[@"承诺待办", @"commitment_tracker"],
+        @[@"人物画像", @"person_profile"], @[@"关系洞察", @"relationship_insight"], @[@"多人比较", @"comparison"],
+        @[@"话题分析", @"topic_analysis"], @[@"事件时间线", @"timeline"]
+    ];
+    for (NSArray<NSString *> *mode in analysisModes) {
+        [self.analysisModePicker addItemWithTitle:mode[0]];
+        self.analysisModePicker.lastItem.representedObject = mode[1];
+    }
+    self.analysisModePicker.font = [NSFont systemFontOfSize:12];
     self.agentSendButton = [NSButton buttonWithTitle:@"↑" target:self action:@selector(askCustomerAgent:)];
     self.agentSendButton.bordered = NO; self.agentSendButton.font = [NSFont boldSystemFontOfSize:18]; self.agentSendButton.contentTintColor = NSColor.whiteColor;
     self.agentSendButton.wantsLayer = YES; self.agentSendButton.layer.backgroundColor = [NSColor colorWithRed:0.15 green:0.43 blue:0.92 alpha:1].CGColor; self.agentSendButton.layer.cornerRadius = 18;
     [taskSurface addSubview:agentTranscriptScroll]; [taskSurface addSubview:composer];
-    [composer addSubview:agentInputScroll]; [composer addSubview:self.agentPlaceholderLabel]; [composer addSubview:self.agentModelPicker]; [composer addSubview:connectionButton]; [composer addSubview:self.agentSendButton];
-    for (NSView *view in @[agentTranscriptScroll, composer, agentInputScroll, self.agentPlaceholderLabel, self.agentModelPicker, connectionButton, self.agentSendButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
+    [composer addSubview:agentInputScroll]; [composer addSubview:self.agentPlaceholderLabel]; [composer addSubview:self.analysisModePicker]; [composer addSubview:self.agentModelPicker]; [composer addSubview:connectionButton]; [composer addSubview:self.agentSendButton];
+    for (NSView *view in @[agentTranscriptScroll, composer, agentInputScroll, self.agentPlaceholderLabel, self.analysisModePicker, self.agentModelPicker, connectionButton, self.agentSendButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
         [agentTranscriptScroll.leadingAnchor constraintEqualToAnchor:taskSurface.leadingAnchor constant:34], [agentTranscriptScroll.trailingAnchor constraintEqualToAnchor:taskSurface.trailingAnchor constant:-34],
         [agentTranscriptScroll.topAnchor constraintEqualToAnchor:taskSurface.topAnchor constant:8], [agentTranscriptScroll.bottomAnchor constraintEqualToAnchor:composer.topAnchor constant:-14],
@@ -1080,13 +1252,13 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         [agentInputScroll.leadingAnchor constraintEqualToAnchor:composer.leadingAnchor constant:12], [agentInputScroll.trailingAnchor constraintEqualToAnchor:self.agentSendButton.leadingAnchor constant:-10],
         [agentInputScroll.topAnchor constraintEqualToAnchor:composer.topAnchor constant:8], [agentInputScroll.heightAnchor constraintEqualToConstant:70],
         [self.agentPlaceholderLabel.leadingAnchor constraintEqualToAnchor:agentInputScroll.leadingAnchor constant:14], [self.agentPlaceholderLabel.topAnchor constraintEqualToAnchor:agentInputScroll.topAnchor constant:15], [self.agentPlaceholderLabel.trailingAnchor constraintLessThanOrEqualToAnchor:agentInputScroll.trailingAnchor constant:-14],
-        [self.agentSendButton.trailingAnchor constraintEqualToAnchor:composer.trailingAnchor constant:-14], [self.agentSendButton.centerYAnchor constraintEqualToAnchor:agentInputScroll.centerYAnchor], [self.agentSendButton.widthAnchor constraintEqualToConstant:36], [self.agentSendButton.heightAnchor constraintEqualToConstant:36],
-        [self.agentModelPicker.leadingAnchor constraintEqualToAnchor:agentInputScroll.leadingAnchor constant:13], [self.agentModelPicker.centerYAnchor constraintEqualToAnchor:connectionButton.centerYAnchor], [self.agentModelPicker.widthAnchor constraintEqualToConstant:220],
+        [self.agentSendButton.trailingAnchor constraintEqualToAnchor:composer.trailingAnchor constant:-14], [self.agentSendButton.centerYAnchor constraintEqualToAnchor:composer.centerYAnchor], [self.agentSendButton.widthAnchor constraintEqualToConstant:36], [self.agentSendButton.heightAnchor constraintEqualToConstant:36],
+        [self.analysisModePicker.leadingAnchor constraintEqualToAnchor:agentInputScroll.leadingAnchor constant:13], [self.analysisModePicker.centerYAnchor constraintEqualToAnchor:connectionButton.centerYAnchor], [self.analysisModePicker.widthAnchor constraintEqualToConstant:120],
+        [self.agentModelPicker.leadingAnchor constraintEqualToAnchor:self.analysisModePicker.trailingAnchor constant:8], [self.agentModelPicker.centerYAnchor constraintEqualToAnchor:connectionButton.centerYAnchor], [self.agentModelPicker.widthAnchor constraintEqualToConstant:190],
         [connectionButton.leadingAnchor constraintEqualToAnchor:self.agentModelPicker.trailingAnchor constant:12], [connectionButton.topAnchor constraintEqualToAnchor:agentInputScroll.bottomAnchor constant:10]
     ]];
-    if (self.startupError.length) {
-        self.agentTranscript.string = [self startupDetailText];
-    }
+    [self setAgentTranscriptContent:[[NSAttributedString alloc] initWithString:@""]];
+    [self reloadSavedAnalyses];
 }
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
@@ -1130,15 +1302,78 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     if (notification.object == self.agentInput) self.agentPlaceholderLabel.hidden = self.agentInput.string.length > 0;
 }
 
+- (NSDictionary *)evidenceForID:(NSString *)evidenceID {
+    for (NSDictionary *lead in self.visibleLeads ?: @[]) {
+        for (NSDictionary *evidence in [lead[@"evidence"] isKindOfClass:NSArray.class] ? lead[@"evidence"] : @[]) {
+            if ([evidence[@"evidence_id"] isEqualToString:evidenceID]) return evidence;
+        }
+    }
+    return nil;
+}
+
+- (BOOL)textView:(NSTextView *)textView clickedOnLink:(id)link atIndex:(NSUInteger)charIndex {
+    (void)charIndex;
+    if (textView != self.agentTranscript || ![link isKindOfClass:NSURL.class]) return NO;
+    NSURL *URL = link;
+    if (![URL.scheme isEqualToString:@"evidence"]) return NO;
+    NSString *evidenceID = URL.host ?: @"";
+    NSDictionary *evidence = [self evidenceForID:evidenceID];
+    if (!evidence) { NSBeep(); return YES; }
+    NSMutableString *detail = [NSMutableString stringWithFormat:@"%@ · %@ · %@\n\n%@\n", evidence[@"time"] ?: @"", evidence[@"direction"] ?: @"", evidence[@"sender"] ?: @"", evidence[@"content"] ?: @""];
+    NSArray *context = [evidence[@"context"] isKindOfClass:NSArray.class] ? evidence[@"context"] : @[];
+    if (context.count) {
+        [detail appendString:@"\n前后消息\n"];
+        for (NSDictionary *item in context) {
+            NSString *marker = [item[@"is_target"] boolValue] ? @"▶" : @" ";
+            [detail appendFormat:@"%@ %@  [%@] %@\n%@\n\n", marker, item[@"time"] ?: @"", item[@"direction"] ?: @"", item[@"sender"] ?: @"", item[@"content"] ?: @""];
+        }
+    }
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = [NSString stringWithFormat:@"原始证据 · %@", evidenceID];
+    alert.informativeText = @"内容来自本机已同步的微信记录，箭头标记当前引用。";
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 620, 330)];
+    scroll.hasVerticalScroller = YES; scroll.autohidesScrollers = YES; scroll.borderType = NSBezelBorder;
+    NSTextView *view = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 620, 330)];
+    view.editable = NO; view.selectable = YES; view.font = [NSFont systemFontOfSize:13]; view.string = detail;
+    view.textContainerInset = NSMakeSize(14, 12); scroll.documentView = view; alert.accessoryView = scroll;
+    [alert addButtonWithTitle:@"关闭"];
+    [alert runModal];
+    return YES;
+}
+
+- (BOOL)textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector {
+    if (textView != self.agentInput || self.agentInput.hasMarkedText) return NO;
+    BOOL isReturn = commandSelector == @selector(insertNewline:) || commandSelector == @selector(insertNewlineIgnoringFieldEditor:);
+    NSEventModifierFlags flags = NSApp.currentEvent.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+    if (!isReturn || (flags & NSEventModifierFlagShift)) return NO;
+    [self askCustomerAgent:textView];
+    return YES;
+}
+
 - (NSString *)agentLeadSummary {
-    if (!self.visibleLeads.count) return @"没有匹配结果。";
     NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    NSArray *sections = [self.lastAgentResult[@"sections"] isKindOfClass:NSArray.class] ? self.lastAgentResult[@"sections"] : @[];
+    for (NSDictionary *section in sections) {
+        NSString *title = [section[@"title"] isKindOfClass:NSString.class] ? section[@"title"] : @"分析";
+        NSString *content = [section[@"content"] isKindOfClass:NSString.class] ? section[@"content"] : @"";
+        if (content.length) [lines addObject:[NSString stringWithFormat:@"%@\n%@", title, content]];
+    }
+    NSArray *followups = [self.lastAgentResult[@"suggested_followups"] isKindOfClass:NSArray.class] ? self.lastAgentResult[@"suggested_followups"] : @[];
+    if (followups.count) {
+        NSMutableArray<NSString *> *items = [NSMutableArray arrayWithObject:@"可以继续问"];
+        for (NSUInteger index = 0; index < MIN(followups.count, 4); index += 1) {
+            [items addObject:[NSString stringWithFormat:@"%lu. %@", (unsigned long)index + 1, followups[index]]];
+        }
+        [lines addObject:[items componentsJoinedByString:@"\n"]];
+    }
+    if (lines.count) return [lines componentsJoinedByString:@"\n\n"];
+    if (!self.visibleLeads.count) return @"没有匹配结果。";
     NSUInteger limit = MIN(self.visibleLeads.count, 12);
     for (NSUInteger index = 0; index < limit; index += 1) {
         NSDictionary *lead = self.visibleLeads[index];
-        NSString *name = lead[@"display_name"] ?: @"未命名客户";
-        NSString *need = lead[@"need"] ?: @"未提取到明确需求";
-        [lines addObject:[NSString stringWithFormat:@"%lu. %@ · %@", (unsigned long)index + 1, name, need]];
+        NSString *name = lead[@"display_name"] ?: @"未命名联系人";
+        NSString *summary = lead[@"summary"] ?: lead[@"need"] ?: @"";
+        [lines addObject:[NSString stringWithFormat:@"%lu. %@ · %@", (unsigned long)index + 1, name, summary]];
     }
     if (self.visibleLeads.count > limit) [lines addObject:[NSString stringWithFormat:@"其余 %lu 位见 Excel。", (unsigned long)(self.visibleLeads.count - limit)]];
     return [lines componentsJoinedByString:@"\n"];
@@ -1151,47 +1386,174 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     return [NSString stringWithFormat:@"账号 %@ · 已同步 %@ 个对话，可以开始提问。", accountID, eligible];
 }
 
+- (void)setAgentTranscriptContent:(NSAttributedString *)content {
+    [self.agentTranscript.textStorage setAttributedString:content ?: [[NSAttributedString alloc] initWithString:@""]];
+}
+
+- (NSMutableAttributedString *)agentTranscriptWithHistory {
+    NSMutableAttributedString *content = [[NSMutableAttributedString alloc] init];
+    if (self.priorAgentTranscript.length) {
+        [content appendAttributedString:self.priorAgentTranscript];
+        AppendAgentText(content, @"\n\n────────────────────────\n\n", [NSFont systemFontOfSize:11], [NSColor colorWithWhite:0.84 alpha:1], 0);
+    }
+    return content;
+}
+
+- (NSArray<NSDictionary<NSString *, NSString *> *> *)agentStages {
+    return @[
+        @{@"key": @"planning", @"title": @"理解任务"},
+        @{@"key": @"retrieval", @"title": @"证据召回"},
+        @{@"key": @"analysis", @"title": @"语义复核"},
+        @{@"key": @"audit", @"title": @"覆盖审计"},
+    ];
+}
+
+- (NSAttributedString *)agentProgressTranscriptForQuestion:(NSString *)question progress:(NSDictionary<NSString *, NSString *> *)progress activeStage:(NSString *)activeStage {
+    NSMutableAttributedString *content = [self agentTranscriptWithHistory];
+    AppendAgentText(content, @"你\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.secondaryLabelColor, 3);
+    AppendAgentText(content, [NSString stringWithFormat:@"%@\n", question], [NSFont systemFontOfSize:15], [NSColor colorWithWhite:0.10 alpha:1], 20);
+    AppendAgentText(content, @"✦  Agent\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], [NSColor colorWithRed:0.15 green:0.38 blue:0.82 alpha:1], 3);
+    AppendAgentText(content, @"正在处理这项任务\n", [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], [NSColor colorWithWhite:0.12 alpha:1], 14);
+
+    NSArray<NSDictionary<NSString *, NSString *> *> *stages = [self agentStages];
+    NSUInteger activeIndex = [stages indexOfObjectPassingTest:^BOOL(NSDictionary<NSString *,NSString *> *stage, NSUInteger index, BOOL *stop) {
+        (void)index; (void)stop;
+        return [stage[@"key"] isEqualToString:activeStage];
+    }];
+    for (NSUInteger index = 0; index < stages.count; index += 1) {
+        NSDictionary<NSString *, NSString *> *stage = stages[index];
+        BOOL completed = activeIndex != NSNotFound && index < activeIndex;
+        BOOL active = index == activeIndex;
+        NSString *marker = completed ? @"✓" : (active ? @"●" : @"○");
+        NSString *detail = progress[stage[@"key"]] ?: stage[@"title"];
+        NSColor *color = completed ? [NSColor colorWithRed:0.12 green:0.52 blue:0.34 alpha:1] : (active ? [NSColor colorWithRed:0.15 green:0.43 blue:0.92 alpha:1] : [NSColor colorWithWhite:0.66 alpha:1]);
+        NSFont *font = active ? [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold] : [NSFont systemFontOfSize:13 weight:NSFontWeightRegular];
+        AppendAgentText(content, [NSString stringWithFormat:@"%@  %@\n", marker, detail], font, color, index + 1 == stages.count ? 0 : 8);
+    }
+    return content;
+}
+
+- (NSAttributedString *)agentCompletedTranscriptForQuestion:(NSString *)question trace:(NSArray<NSString *> *)trace reply:(NSString *)reply summary:(NSString *)summary resultTitle:(NSString *)resultTitle resultCount:(NSUInteger)resultCount {
+    (void)summary;
+    NSMutableAttributedString *content = [self agentTranscriptWithHistory];
+    AppendAgentText(content, @"你\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.secondaryLabelColor, 3);
+    AppendAgentText(content, [NSString stringWithFormat:@"%@\n", question], [NSFont systemFontOfSize:15], [NSColor colorWithWhite:0.10 alpha:1], 20);
+    AppendAgentText(content, @"✦  Agent\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], [NSColor colorWithRed:0.15 green:0.38 blue:0.82 alpha:1], 3);
+    AppendAgentText(content, @"执行完成\n", [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], [NSColor colorWithWhite:0.12 alpha:1], 14);
+    for (NSString *item in trace) {
+        AppendAgentText(content, [NSString stringWithFormat:@"✓  %@\n", item], [NSFont systemFontOfSize:13], [NSColor colorWithRed:0.12 green:0.52 blue:0.34 alpha:1], 8);
+    }
+    if (trace.count > 0 && trace.count < 4) {
+        NSArray<NSDictionary<NSString *, NSString *> *> *stages = [self agentStages];
+        for (NSUInteger index = trace.count; index < stages.count; index += 1) {
+            AppendAgentText(content, [NSString stringWithFormat:@"—  %@ · 无候选，无需执行\n", stages[index][@"title"]], [NSFont systemFontOfSize:13], [NSColor colorWithWhite:0.60 alpha:1], 8);
+        }
+    }
+    NSString *heading = resultTitle.length ? resultTitle : [NSString stringWithFormat:@"结果 · %lu 位", (unsigned long)resultCount];
+    AppendAgentText(content, [NSString stringWithFormat:@"\n%@\n", heading], [NSFont systemFontOfSize:16 weight:NSFontWeightSemibold], [NSColor colorWithWhite:0.10 alpha:1], 6);
+    AppendAgentText(content, [NSString stringWithFormat:@"%@\n", reply], [NSFont systemFontOfSize:13], [NSColor colorWithWhite:0.22 alpha:1], 12);
+    if (self.visibleLeads.count) {
+        AppendAgentText(content, @"精确互动统计\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.secondaryLabelColor, 4);
+        for (NSUInteger index = 0; index < MIN(self.visibleLeads.count, 4); index += 1) {
+            NSDictionary *lead = self.visibleLeads[index];
+            NSDictionary *stats = [lead[@"conversation_stats"] isKindOfClass:NSDictionary.class] ? lead[@"conversation_stats"] : @{};
+            NSString *line = [NSString stringWithFormat:@"%@ · %@ 条 · %@ 个活跃日 · 对方回复中位数 %@ 分钟 · 我方 %@ 分钟\n", lead[@"display_name"] ?: @"联系人", stats[@"message_count"] ?: @0, stats[@"active_days"] ?: @0, stats[@"their_median_response_minutes"] ?: @"—", stats[@"my_median_response_minutes"] ?: @"—"];
+            AppendAgentText(content, line, [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular], NSColor.secondaryLabelColor, 3);
+        }
+        AppendAgentText(content, @"\n", [NSFont systemFontOfSize:8], NSColor.clearColor, 0);
+    }
+    NSArray *sections = [self.lastAgentResult[@"sections"] isKindOfClass:NSArray.class] ? self.lastAgentResult[@"sections"] : @[];
+    for (NSDictionary *section in sections) {
+        NSString *title = [section[@"title"] isKindOfClass:NSString.class] ? section[@"title"] : @"分析";
+        NSString *body = [section[@"content"] isKindOfClass:NSString.class] ? section[@"content"] : @"";
+        NSNumber *confidence = [section[@"confidence"] isKindOfClass:NSNumber.class] ? section[@"confidence"] : nil;
+        NSString *titleLine = confidence ? [NSString stringWithFormat:@"%@  ·  置信度 %@%%\n", title, confidence] : [NSString stringWithFormat:@"%@\n", title];
+        AppendAgentText(content, titleLine, [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold], [NSColor colorWithWhite:0.12 alpha:1], 3);
+        AppendAgentText(content, [body stringByAppendingString:@"\n"], [NSFont systemFontOfSize:13], [NSColor colorWithWhite:0.25 alpha:1], 5);
+        NSArray *evidenceIDs = [section[@"evidence_ids"] isKindOfClass:NSArray.class] ? section[@"evidence_ids"] : @[];
+        for (NSUInteger index = 0; index < evidenceIDs.count; index += 1) AppendEvidenceLink(content, [NSString stringWithFormat:@"证据 %lu", (unsigned long)index + 1], evidenceIDs[index]);
+        NSArray *counterIDs = [section[@"counter_evidence_ids"] isKindOfClass:NSArray.class] ? section[@"counter_evidence_ids"] : @[];
+        for (NSUInteger index = 0; index < counterIDs.count; index += 1) AppendEvidenceLink(content, [NSString stringWithFormat:@"反例 %lu", (unsigned long)index + 1], counterIDs[index]);
+        AppendAgentText(content, @"\n\n", [NSFont systemFontOfSize:8], NSColor.clearColor, 0);
+    }
+    NSArray *items = [self.lastAgentResult[@"structured_items"] isKindOfClass:NSArray.class] ? self.lastAgentResult[@"structured_items"] : @[];
+    if (items.count) {
+        AppendAgentText(content, @"时间线与待办\n", [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold], [NSColor colorWithWhite:0.12 alpha:1], 5);
+        for (NSDictionary *item in items) {
+            NSString *line = [NSString stringWithFormat:@"• %@  %@  %@\n", item[@"date"] ?: @"", item[@"status"] ?: @"", item[@"content"] ?: @""];
+            AppendAgentText(content, line, [NSFont systemFontOfSize:13], [NSColor colorWithWhite:0.25 alpha:1], 4);
+        }
+    }
+    NSArray *limitations = [self.lastAgentResult[@"limitations"] isKindOfClass:NSArray.class] ? self.lastAgentResult[@"limitations"] : @[];
+    if (limitations.count) {
+        AppendAgentText(content, @"边界说明\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.secondaryLabelColor, 3);
+        for (NSString *item in limitations) AppendAgentText(content, [NSString stringWithFormat:@"• %@\n", item], [NSFont systemFontOfSize:12], NSColor.secondaryLabelColor, 3);
+    }
+    NSArray *followups = [self.lastAgentResult[@"suggested_followups"] isKindOfClass:NSArray.class] ? self.lastAgentResult[@"suggested_followups"] : @[];
+    if (followups.count) {
+        AppendAgentText(content, @"\n可以继续问\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.secondaryLabelColor, 4);
+        for (NSUInteger index = 0; index < MIN(followups.count, 4); index += 1) AppendAgentText(content, [NSString stringWithFormat:@"%lu. %@\n", (unsigned long)index + 1, followups[index]], [NSFont systemFontOfSize:12], NSColor.secondaryLabelColor, 4);
+    }
+    return content;
+}
+
+- (NSAttributedString *)agentFailureTranscriptForQuestion:(NSString *)question progress:(NSDictionary<NSString *, NSString *> *)progress activeStage:(NSString *)activeStage message:(NSString *)message {
+    NSMutableAttributedString *content = [[self agentProgressTranscriptForQuestion:question progress:progress activeStage:activeStage] mutableCopy];
+    AppendAgentText(content, @"\n任务失败\n", [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], NSColor.systemRedColor, 4);
+    AppendAgentText(content, message, [NSFont systemFontOfSize:13], NSColor.systemRedColor, 0);
+    return content;
+}
+
 - (void)askCustomerAgent:(id)sender {
     (void)sender;
     NSString *question = [self.agentInput.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!question.length || self.agentCommandRunning) { NSBeep(); return; }
+    if (self.lastAgentResult) self.priorAgentTranscript = [self.agentTranscript.textStorage copy];
     self.lastAgentQuestion = question;
-    NSString *taskHeader = [NSString stringWithFormat:@"你\n%@\n\n分析过程", question];
-    self.agentTranscript.string = taskHeader;
+    self.lastAgentResult = nil;
+    self.visibleLeads = @[];
+    NSMutableDictionary<NSString *, NSString *> *progressByStage = [@{@"planning": @"理解任务与时间范围"} mutableCopy];
+    __block NSString *activeStage = @"planning";
+    [self setAgentTranscriptContent:[self agentProgressTranscriptForQuestion:question progress:progressByStage activeStage:activeStage]];
     self.statusLabel.stringValue = @"理解任务";
     self.statusLabel.textColor = NSColor.systemOrangeColor;
+    self.agentActivityIndicator.hidden = NO;
+    [self.agentActivityIndicator startAnimation:nil];
     self.agentSendButton.enabled = NO;
     self.agentSendButton.title = @"…";
     [self.agentTranscript scrollRangeToVisible:NSMakeRange(self.agentTranscript.string.length, 0)];
     [self.window.contentView displayIfNeeded];
     NSString *databasePath = self.currentDBPath;
-    NSMutableDictionary<NSString *, NSString *> *progressByStage = [NSMutableDictionary dictionary];
-    NSArray<NSString *> *progressOrder = @[@"planning", @"retrieval", @"analysis", @"audit"];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         int status = 0; NSError *error = nil;
-        NSArray<NSString *> *lines = [self runCustomerAgentCommand:@[@"-m", @"agent_core.customer_agent_cli", @"--db", databasePath, @"--question", question] terminationStatus:&status error:&error progressHandler:^(NSDictionary *eventObject) {
+        NSMutableArray<NSString *> *arguments = [@[@"-m", @"agent_core.customer_agent_cli", @"--db", databasePath, @"--question", question] mutableCopy];
+        if (self.agentSessionID.length) [arguments addObjectsFromArray:@[@"--session-id", self.agentSessionID]];
+        NSString *mode = [self.analysisModePicker.selectedItem.representedObject isKindOfClass:NSString.class] ? self.analysisModePicker.selectedItem.representedObject : @"";
+        if (mode.length) [arguments addObjectsFromArray:@[@"--mode", mode]];
+        NSArray<NSString *> *lines = [self runCustomerAgentCommand:arguments terminationStatus:&status error:&error progressHandler:^(NSDictionary *eventObject) {
             NSString *progressText = [self agentProgressText:eventObject];
             NSString *stage = [eventObject[@"stage"] isKindOfClass:NSString.class] ? eventObject[@"stage"] : @"planning";
+            activeStage = stage;
             progressByStage[stage] = progressText;
-            NSMutableArray<NSString *> *progressLines = [NSMutableArray array];
-            for (NSString *key in progressOrder) {
-                NSString *value = progressByStage[key];
-                if (value.length) [progressLines addObject:[@"• " stringByAppendingString:value]];
-            }
-            NSString *progressTranscript = [NSString stringWithFormat:@"%@\n%@", taskHeader, [progressLines componentsJoinedByString:@"\n"]];
+            NSDictionary<NSString *, NSString *> *progressSnapshot = [progressByStage copy];
             dispatch_async(dispatch_get_main_queue(), ^{
                 self.statusLabel.stringValue = progressText;
                 self.statusLabel.textColor = NSColor.systemOrangeColor;
-                self.agentTranscript.string = progressTranscript;
+                [self setAgentTranscriptContent:[self agentProgressTranscriptForQuestion:question progress:progressSnapshot activeStage:stage]];
                 [self.agentTranscript scrollRangeToVisible:NSMakeRange(self.agentTranscript.string.length, 0)];
             });
         }];
         NSDictionary *object = [self lastJSONObjectFromLines:lines];
+        NSDictionary<NSString *, NSString *> *finalProgress = [progressByStage copy];
+        NSString *finalStage = activeStage;
         dispatch_async(dispatch_get_main_queue(), ^{
             self.agentSendButton.enabled = YES;
             self.agentSendButton.title = @"↑";
+            [self.agentActivityIndicator stopAnimation:nil];
+            self.agentActivityIndicator.hidden = YES;
             if (status != 0 || ![object[@"leads"] isKindOfClass:NSArray.class]) {
-                self.agentTranscript.string = [NSString stringWithFormat:@"%@\n\n任务失败\n%@", self.agentTranscript.string, [self messageFromEvent:object defaultMessage:(error.localizedDescription ?: @"DeepSeek 微信客户分析 Agent 查询失败")]];
+                NSString *message = [self messageFromEvent:object defaultMessage:(error.localizedDescription ?: @"DeepSeek 微信客户分析 Agent 查询失败")];
+                [self setAgentTranscriptContent:[self agentFailureTranscriptForQuestion:question progress:finalProgress activeStage:finalStage message:message]];
                 self.statusLabel.stringValue = @"任务失败";
                 self.statusLabel.textColor = NSColor.systemRedColor;
                 [self.agentTranscript scrollRangeToVisible:NSMakeRange(self.agentTranscript.string.length, 0)];
@@ -1199,16 +1561,133 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
             }
             self.visibleLeads = object[@"leads"];
             self.allLeads = self.visibleLeads;
+            self.lastAgentResult = object;
+            self.agentSessionID = [object[@"session_id"] isKindOfClass:NSString.class] ? object[@"session_id"] : self.agentSessionID;
             self.startupError = nil;
-            NSString *reply = object[@"reply"] ?: @"已完成查询。";
+            NSString *reply = object[@"answer"] ?: object[@"reply"] ?: @"已完成查询。";
+            NSString *resultTitle = [object[@"result_title"] isKindOfClass:NSString.class] ? object[@"result_title"] : @"智能分析结果";
             NSArray *trace = [object[@"analysis_trace"] isKindOfClass:NSArray.class] ? object[@"analysis_trace"] : @[];
-            NSString *traceText = trace.count ? [trace componentsJoinedByString:@"\n"] : @"分析完成";
-            self.agentTranscript.string = [NSString stringWithFormat:@"%@\n%@\n\n结果 · %lu 位\n%@\n\n%@", taskHeader, traceText, (unsigned long)self.visibleLeads.count, reply, [self agentLeadSummary]];
+            [self setAgentTranscriptContent:[self agentCompletedTranscriptForQuestion:question trace:trace reply:reply summary:[self agentLeadSummary] resultTitle:resultTitle resultCount:self.visibleLeads.count]];
             self.agentInput.string = @"";
             self.agentPlaceholderLabel.hidden = NO;
-            self.statusLabel.stringValue = [NSString stringWithFormat:@"完成 · %lu 位", (unsigned long)self.visibleLeads.count];
+            self.statusLabel.stringValue = [NSString stringWithFormat:@"完成 · %@", resultTitle];
             self.statusLabel.textColor = NSColor.systemGreenColor;
             [self.agentTranscript scrollRangeToVisible:NSMakeRange(self.agentTranscript.string.length, 0)];
+        });
+    });
+}
+
+- (void)newAgentAnalysis:(id)sender {
+    (void)sender;
+    if (self.agentCommandRunning) { NSBeep(); return; }
+    self.agentSessionID = nil; self.priorAgentTranscript = nil; self.lastAgentResult = nil; self.lastAgentQuestion = nil;
+    self.visibleLeads = @[]; self.allLeads = @[]; self.agentInput.string = @""; self.agentPlaceholderLabel.hidden = NO;
+    [self setAgentTranscriptContent:[[NSAttributedString alloc] initWithString:@""]];
+    self.statusLabel.stringValue = [self startupDetailText]; self.statusLabel.textColor = NSColor.systemGreenColor;
+}
+
+- (void)reloadSavedAnalyses {
+    if (self.agentCommandRunning) return;
+    NSString *databasePath = self.currentDBPath;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        int status = 0; NSError *error = nil;
+        NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.customer_agent_cli", @"--db", databasePath, @"--list-saved"] terminationStatus:&status error:&error];
+        NSDictionary *object = [self lastJSONObjectFromLines:lines];
+        NSArray *saved = status == 0 && [object[@"saved_analyses"] isKindOfClass:NSArray.class] ? object[@"saved_analyses"] : @[];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.savedAnalysisPicker removeAllItems]; [self.savedAnalysisPicker addItemWithTitle:@"已保存分析"];
+            for (NSDictionary *item in saved) {
+                [self.savedAnalysisPicker addItemWithTitle:item[@"title"] ?: @"未命名分析"];
+                self.savedAnalysisPicker.lastItem.representedObject = item;
+            }
+            [self.savedAnalysisPicker selectItemAtIndex:0];
+        });
+    });
+}
+
+- (void)saveCurrentAnalysis:(id)sender {
+    (void)sender;
+    if (!self.agentSessionID.length || !self.lastAgentResult || self.agentCommandRunning) { NSBeep(); return; }
+    NSString *databasePath = self.currentDBPath; NSString *sessionID = self.agentSessionID;
+    self.statusLabel.stringValue = @"正在保存分析"; self.statusLabel.textColor = NSColor.systemOrangeColor;
+    self.agentActivityIndicator.hidden = NO; [self.agentActivityIndicator startAnimation:nil];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        int status = 0; NSError *error = nil;
+        NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.customer_agent_cli", @"--db", databasePath, @"--save-session", sessionID] terminationStatus:&status error:&error];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.agentActivityIndicator stopAnimation:nil]; self.agentActivityIndicator.hidden = YES;
+            if (status == 0) { self.statusLabel.stringValue = @"分析已保存，可随新消息刷新"; self.statusLabel.textColor = NSColor.systemGreenColor; [self reloadSavedAnalyses]; }
+            else { self.statusLabel.stringValue = [self messageFromEvent:[self lastJSONObjectFromLines:lines] defaultMessage:(error.localizedDescription ?: @"保存失败")]; self.statusLabel.textColor = NSColor.systemRedColor; }
+        });
+    });
+}
+
+- (void)applySavedAnalysis:(NSDictionary *)object title:(NSString *)title statusText:(NSString *)statusText {
+    self.priorAgentTranscript = nil;
+    self.lastAgentResult = object; self.visibleLeads = object[@"leads"]; self.allLeads = self.visibleLeads;
+    self.lastAgentQuestion = object[@"query"] ?: title; self.agentSessionID = object[@"session_id"] ?: self.agentSessionID;
+    NSArray *trace = [object[@"analysis_trace"] isKindOfClass:NSArray.class] ? object[@"analysis_trace"] : @[];
+    [self setAgentTranscriptContent:[self agentCompletedTranscriptForQuestion:[NSString stringWithFormat:@"已保存：%@", title] trace:trace reply:object[@"answer"] ?: @"已载入" summary:@"" resultTitle:object[@"result_title"] ?: title resultCount:self.visibleLeads.count]];
+    self.statusLabel.stringValue = statusText; self.statusLabel.textColor = NSColor.systemGreenColor;
+}
+
+- (void)loadSelectedAnalysis:(id)sender {
+    (void)sender;
+    NSDictionary *saved = [self.savedAnalysisPicker.selectedItem.representedObject isKindOfClass:NSDictionary.class] ? self.savedAnalysisPicker.selectedItem.representedObject : nil;
+    if (!saved || self.agentCommandRunning) return;
+    NSString *savedID = saved[@"saved_id"] ?: @""; NSString *title = saved[@"title"] ?: @"已保存分析"; NSString *databasePath = self.currentDBPath;
+    self.statusLabel.stringValue = @"正在载入本地分析"; self.statusLabel.textColor = NSColor.systemOrangeColor;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        int status = 0; NSError *error = nil;
+        NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.customer_agent_cli", @"--db", databasePath, @"--load-saved", savedID] terminationStatus:&status error:&error];
+        NSDictionary *object = [self lastJSONObjectFromLines:lines];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (status != 0 || ![object[@"leads"] isKindOfClass:NSArray.class]) { self.statusLabel.stringValue = [self messageFromEvent:object defaultMessage:(error.localizedDescription ?: @"载入失败")]; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+            [self applySavedAnalysis:object title:title statusText:@"已从本机载入"];
+        });
+    });
+}
+
+- (void)deleteSelectedAnalysis:(id)sender {
+    (void)sender;
+    NSDictionary *saved = [self.savedAnalysisPicker.selectedItem.representedObject isKindOfClass:NSDictionary.class] ? self.savedAnalysisPicker.selectedItem.representedObject : nil;
+    if (!saved || self.agentCommandRunning) { NSBeep(); return; }
+    NSAlert *alert = [[NSAlert alloc] init]; alert.messageText = @"删除这项保存的分析？"; alert.informativeText = saved[@"title"] ?: @"已保存分析"; [alert addButtonWithTitle:@"删除"]; [alert addButtonWithTitle:@"取消"];
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    NSString *savedID = saved[@"saved_id"] ?: @""; NSString *databasePath = self.currentDBPath;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        int status = 0; NSError *error = nil;
+        NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.customer_agent_cli", @"--db", databasePath, @"--delete-saved", savedID] terminationStatus:&status error:&error];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (status == 0) { [self newAgentAnalysis:nil]; self.statusLabel.stringValue = @"保存的分析已删除"; self.statusLabel.textColor = NSColor.systemGreenColor; [self reloadSavedAnalyses]; }
+            else { self.statusLabel.stringValue = [self messageFromEvent:[self lastJSONObjectFromLines:lines] defaultMessage:(error.localizedDescription ?: @"删除失败")]; self.statusLabel.textColor = NSColor.systemRedColor; }
+        });
+    });
+}
+
+- (void)refreshSelectedAnalysis:(id)sender {
+    (void)sender;
+    NSDictionary *saved = [self.savedAnalysisPicker.selectedItem.representedObject isKindOfClass:NSDictionary.class] ? self.savedAnalysisPicker.selectedItem.representedObject : nil;
+    if (!saved || self.agentCommandRunning) return;
+    NSString *savedID = saved[@"saved_id"] ?: @"";
+    NSString *title = saved[@"title"] ?: @"已保存分析";
+    self.statusLabel.stringValue = @"正在检查新增消息"; self.statusLabel.textColor = NSColor.systemOrangeColor;
+    self.agentActivityIndicator.hidden = NO; [self.agentActivityIndicator startAnimation:nil];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        int status = 0; NSError *error = nil;
+        NSArray<NSString *> *lines = [self runCustomerAgentCommand:@[@"-m", @"agent_core.customer_agent_cli", @"--db", self.currentDBPath, @"--refresh-saved", savedID] terminationStatus:&status error:&error progressHandler:^(NSDictionary *eventObject) {
+            dispatch_async(dispatch_get_main_queue(), ^{ self.statusLabel.stringValue = [self agentProgressText:eventObject]; });
+        }];
+        NSDictionary *object = [self lastJSONObjectFromLines:lines];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.agentActivityIndicator stopAnimation:nil]; self.agentActivityIndicator.hidden = YES;
+            if (status != 0 || ![object[@"leads"] isKindOfClass:NSArray.class]) {
+                self.statusLabel.stringValue = [self messageFromEvent:object defaultMessage:(error.localizedDescription ?: @"刷新失败")]; self.statusLabel.textColor = NSColor.systemRedColor; return;
+            }
+            BOOL unchanged = [object[@"refresh_status"] isEqualToString:@"unchanged"];
+            self.agentSessionID = object[@"session_id"] ?: saved[@"session_id"];
+            [self applySavedAnalysis:object title:title statusText:(unchanged ? @"没有相关新消息" : [NSString stringWithFormat:@"已加入 %@ 条新证据", object[@"new_evidence_count"] ?: @0])];
+            if (!unchanged) [self reloadSavedAnalyses];
         });
     });
 }
@@ -1322,9 +1801,15 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 - (NSString *)agentProgressText:(NSDictionary *)eventObject {
     NSString *stage = eventObject[@"stage"] ?: @"";
     NSDictionary *stats = [eventObject[@"stats"] isKindOfClass:NSDictionary.class] ? eventObject[@"stats"] : @{};
-    if ([stage isEqualToString:@"retrieval"]) return [NSString stringWithFormat:@"证据召回 · %@ 个候选 / %@ 个对话", stats[@"candidates"] ?: @0, stats[@"conversations"] ?: @0];
-    if ([stage isEqualToString:@"analysis"]) return [NSString stringWithFormat:@"语义复核 · %@/%@ 批", stats[@"completed"] ?: @0, stats[@"batches"] ?: @0];
-    if ([stage isEqualToString:@"audit"]) return [NSString stringWithFormat:@"覆盖审计 · %@/%@ 批", stats[@"completed"] ?: @0, stats[@"batches"] ?: @0];
+    if ([stage isEqualToString:@"retrieval"]) return [NSString stringWithFormat:@"证据召回 · 扫描 %@ 个对话，召回 %@ 个候选（%@ 天）", stats[@"conversations"] ?: @0, stats[@"candidates"] ?: @0, stats[@"time_window_days"] ?: @0];
+    if ([stage isEqualToString:@"analysis"]) {
+        NSNumber *completed = stats[@"completed"];
+        return completed ? [NSString stringWithFormat:@"语义复核 · 已完成 %@/%@ 批，共 %@ 个候选", completed, stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0] : [NSString stringWithFormat:@"语义复核 · 准备 %@ 批，共 %@ 个候选", stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0];
+    }
+    if ([stage isEqualToString:@"audit"]) {
+        NSNumber *completed = stats[@"completed"];
+        return completed ? [NSString stringWithFormat:@"覆盖审计 · 已完成 %@/%@ 批，独立复核 %@ 个候选", completed, stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0] : [NSString stringWithFormat:@"覆盖审计 · 准备 %@ 批，独立复核 %@ 个候选", stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0];
+    }
     return eventObject[@"message"] ?: @"分析中";
 }
 
@@ -1397,40 +1882,36 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 }
 
 - (void)finishWeChatSyncWithBinary:(NSString *)chatlogBinary accountID:(NSString *)selectedAccountID {
-    int status = 1;
-    NSError *error = nil;
-    NSDictionary *eventObject = nil;
-    NSArray<NSString *> *syncLines = [self runAgentCommand:@[@"-m", @"agent_core.sync_cli", @"--db", self.currentDBPath, @"--chatlog-bin", chatlogBinary, @"sync", @"--account-id", selectedAccountID, @"--limit", @"5000"] terminationStatus:&status error:&error];
-    eventObject = [self lastJSONObjectFromLines:syncLines];
-    if (status != 0) {
-        self.wechatSyncRunning = NO;
-        self.statusLabel.stringValue = [self messageFromEvent:eventObject defaultMessage:(error.localizedDescription ?: @"微信数据同步失败")];
-        self.statusLabel.textColor = NSColor.systemRedColor;
-        return;
-    }
-    NSString *accountID = eventObject[@"evidence"][@"account_id"] ?: @"";
-    if (![accountID isEqualToString:selectedAccountID]) {
-        self.wechatSyncRunning = NO;
-        self.statusLabel.stringValue = @"同步结果账号与所选账号不一致";
-        self.statusLabel.textColor = NSColor.systemRedColor;
-        return;
-    }
-    NSArray<NSString *> *corpusLines = [self runAgentCommand:@[@"-m", @"agent_core.corpus_cli", @"--db", self.currentDBPath, @"--account-id", accountID, @"--days", @"183"] terminationStatus:&status error:&error];
-    eventObject = [self lastJSONObjectFromLines:corpusLines];
-    if (status != 0) {
-        self.wechatSyncRunning = NO;
-        self.statusLabel.stringValue = [self messageFromEvent:eventObject defaultMessage:(error.localizedDescription ?: @"私聊筛选数据构建失败")];
-        self.statusLabel.textColor = NSColor.systemRedColor;
-        return;
-    }
-    NSDictionary *readiness = [self loadReadiness:nil] ?: @{};
-    NSNumber *eligible = readiness[@"eligible_conversations"] ?: @0;
-    self.snapshot = @{ @"metrics": @{ @"customer_total": @0, @"high_intent": @0, @"activation_needed": @0, @"recent_leads": @0, @"distribution": @{} }, @"leads": @[], @"run": @{}, @"account_id": accountID };
-    self.allLeads = @[];
-    self.visibleLeads = @[];
-    self.startupError = @"微信已同步，等待 Agent 指令";
-    self.wechatSyncRunning = NO;
-    [self rebuildWorkspaceWithMessage:[NSString stringWithFormat:@"微信同步完成 · %@ 个双向私聊尚未筛选", eligible] color:NSColor.systemGreenColor];
+    NSString *databasePath = self.currentDBPath;
+    self.statusLabel.stringValue = @"正在同步微信会话…"; self.statusLabel.textColor = NSColor.systemOrangeColor;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        int status = 1; NSError *error = nil;
+        NSArray<NSString *> *syncLines = [self runAgentCommand:@[@"-m", @"agent_core.sync_cli", @"--db", databasePath, @"--chatlog-bin", chatlogBinary, @"sync", @"--account-id", selectedAccountID, @"--limit", @"5000"] terminationStatus:&status error:&error];
+        NSDictionary *eventObject = [self lastJSONObjectFromLines:syncLines];
+        if (status != 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{ self.wechatSyncRunning = NO; self.statusLabel.stringValue = [self messageFromEvent:eventObject defaultMessage:(error.localizedDescription ?: @"微信数据同步失败")]; self.statusLabel.textColor = NSColor.systemRedColor; });
+            return;
+        }
+        NSString *accountID = eventObject[@"evidence"][@"account_id"] ?: @"";
+        if (![accountID isEqualToString:selectedAccountID]) {
+            dispatch_async(dispatch_get_main_queue(), ^{ self.wechatSyncRunning = NO; self.statusLabel.stringValue = @"同步结果账号与所选账号不一致"; self.statusLabel.textColor = NSColor.systemRedColor; });
+            return;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ self.statusLabel.stringValue = @"正在构建完整历史分析语料…"; });
+        NSArray<NSString *> *corpusLines = [self runAgentCommand:@[@"-m", @"agent_core.corpus_cli", @"--db", databasePath, @"--account-id", accountID, @"--all-history"] terminationStatus:&status error:&error];
+        eventObject = [self lastJSONObjectFromLines:corpusLines];
+        if (status != 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{ self.wechatSyncRunning = NO; self.statusLabel.stringValue = [self messageFromEvent:eventObject defaultMessage:(error.localizedDescription ?: @"完整历史语料构建失败")]; self.statusLabel.textColor = NSColor.systemRedColor; });
+            return;
+        }
+        NSDictionary *readiness = [self loadReadiness:nil] ?: @{};
+        NSNumber *eligible = readiness[@"eligible_conversations"] ?: @0;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.snapshot = @{ @"metrics": @{ @"customer_total": @0, @"high_intent": @0, @"activation_needed": @0, @"recent_leads": @0, @"distribution": @{} }, @"leads": @[], @"run": @{}, @"account_id": accountID };
+            self.allLeads = @[]; self.visibleLeads = @[]; self.startupError = @"微信已同步，等待 Agent 指令"; self.wechatSyncRunning = NO;
+            [self rebuildWorkspaceWithMessage:[NSString stringWithFormat:@"微信同步完成 · %@ 个双向私聊可分析", eligible] color:NSColor.systemGreenColor];
+        });
+    });
 }
 
 - (void)connectWeChatData:(id)sender {
@@ -1439,6 +1920,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         self.statusLabel.textColor = NSColor.systemOrangeColor;
         return;
     }
+    if (self.agentCommandRunning) { NSBeep(); self.statusLabel.stringValue = @"另一项操作正在进行"; return; }
     if (![self isSIPDisabled]) {
         self.statusLabel.stringValue = @"SIP 未关闭，无法读取微信密钥";
         self.statusLabel.textColor = NSColor.systemRedColor;
@@ -1452,51 +1934,41 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         self.statusLabel.textColor = NSColor.systemRedColor;
         return;
     }
-    int status = 1;
-    NSError *error = nil;
-    NSArray<NSString *> *accountLines = [self runAgentCommand:@[@"-m", @"agent_core.sync_cli", @"--db", self.currentDBPath, @"--chatlog-bin", chatlogBinary, @"accounts"] terminationStatus:&status error:&error];
-    NSString *selectedAccountID = status == 0 ? [self selectedAccountIDFromLines:accountLines] : @"";
-    if (!selectedAccountID.length) {
-        self.statusLabel.stringValue = status == 0 ? @"未选择微信账号" : @"无法读取可用的微信账号";
-        self.statusLabel.textColor = NSColor.systemRedColor;
-        return;
-    }
-    if (self.chatlogServiceTask.running && ![self.chatlogServiceAccountID isEqualToString:selectedAccountID]) [self stopChatlogService];
-    NSArray<NSString *> *prepareLines = [self runAgentCommand:@[@"-m", @"agent_core.sync_cli", @"--db", self.currentDBPath, @"--chatlog-bin", chatlogBinary, @"prepare-runtime", @"--account-id", selectedAccountID] terminationStatus:&status error:&error];
-    if (status != 0) {
-        NSDictionary *eventObject = [self lastJSONObjectFromLines:prepareLines];
-        self.statusLabel.stringValue = [self messageFromEvent:eventObject defaultMessage:(error.localizedDescription ?: @"微信本地数据准备失败")];
-        self.statusLabel.textColor = NSColor.systemRedColor;
-        return;
-    }
-    NSError *launchError = nil;
-    if (![self startChatlogServiceForAccount:selectedAccountID binary:chatlogBinary error:&launchError]) {
-        self.statusLabel.stringValue = launchError.localizedDescription ?: @"本地微信数据服务启动失败";
-        self.statusLabel.textColor = NSColor.systemRedColor;
-        return;
-    }
-
     self.wechatSyncRunning = YES;
-    self.statusLabel.stringValue = @"正在连接微信本地数据服务…";
+    self.statusLabel.stringValue = @"正在读取微信账号…";
     self.statusLabel.textColor = NSColor.systemOrangeColor;
-    NSTask *ownedService = self.chatlogServiceTask;
+    NSString *databasePath = self.currentDBPath;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        while (ownedService.running) {
-            if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:selectedAccountID]) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (self.chatlogServiceTask != ownedService || !self.wechatSyncRunning) return;
-                    self.statusLabel.stringValue = @"正在解密并同步微信会话…";
-                    [self finishWeChatSyncWithBinary:chatlogBinary accountID:selectedAccountID];
-                });
-                return;
-            }
-            [NSThread sleepForTimeInterval:0.25];
-        }
+        int status = 1; NSError *error = nil;
+        NSArray<NSString *> *accountLines = [self runAgentCommand:@[@"-m", @"agent_core.sync_cli", @"--db", databasePath, @"--chatlog-bin", chatlogBinary, @"accounts"] terminationStatus:&status error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (self.chatlogServiceTask != ownedService || !self.wechatSyncRunning) return;
-            self.wechatSyncRunning = NO;
-            self.statusLabel.stringValue = @"本地微信数据服务启动失败";
-            self.statusLabel.textColor = NSColor.systemRedColor;
+            if (status != 0) { self.wechatSyncRunning = NO; self.statusLabel.stringValue = error.localizedDescription ?: @"无法读取可用的微信账号"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+            NSString *selectedAccountID = [self selectedAccountIDFromLines:accountLines];
+            if (!selectedAccountID.length) { self.wechatSyncRunning = NO; self.statusLabel.stringValue = @"未选择微信账号"; self.statusLabel.textColor = NSColor.systemOrangeColor; return; }
+            if (self.chatlogServiceTask.running && ![self.chatlogServiceAccountID isEqualToString:selectedAccountID]) [self stopChatlogService];
+            self.statusLabel.stringValue = @"正在准备所选账号的本地数据…";
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                int prepareStatus = 1; NSError *prepareError = nil;
+                NSArray<NSString *> *prepareLines = [self runAgentCommand:@[@"-m", @"agent_core.sync_cli", @"--db", databasePath, @"--chatlog-bin", chatlogBinary, @"prepare-runtime", @"--account-id", selectedAccountID] terminationStatus:&prepareStatus error:&prepareError];
+                NSDictionary *eventObject = [self lastJSONObjectFromLines:prepareLines];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (prepareStatus != 0) { self.wechatSyncRunning = NO; self.statusLabel.stringValue = [self messageFromEvent:eventObject defaultMessage:(prepareError.localizedDescription ?: @"微信本地数据准备失败")]; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+                    NSError *launchError = nil;
+                    if (![self startChatlogServiceForAccount:selectedAccountID binary:chatlogBinary error:&launchError]) { self.wechatSyncRunning = NO; self.statusLabel.stringValue = launchError.localizedDescription ?: @"本地微信数据服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+                    self.statusLabel.stringValue = @"正在连接微信本地数据服务…";
+                    NSTask *ownedService = self.chatlogServiceTask;
+                    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                        while (ownedService.running) {
+                            if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:selectedAccountID]) {
+                                dispatch_async(dispatch_get_main_queue(), ^{ if (self.chatlogServiceTask == ownedService && self.wechatSyncRunning) [self finishWeChatSyncWithBinary:chatlogBinary accountID:selectedAccountID]; });
+                                return;
+                            }
+                            [NSThread sleepForTimeInterval:0.25];
+                        }
+                        dispatch_async(dispatch_get_main_queue(), ^{ if (self.chatlogServiceTask == ownedService && self.wechatSyncRunning) { self.wechatSyncRunning = NO; self.statusLabel.stringValue = @"本地微信数据服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; } });
+                    });
+                });
+            });
         });
     });
 }
@@ -1533,48 +2005,98 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     NSTimeInterval cutoff = NSDate.date.timeIntervalSince1970 - 30 * 86400;
     NSMutableDictionary<NSString *, NSNumber *> *distribution = [NSMutableDictionary dictionary];
     for (NSDictionary *lead in self.visibleLeads) {
-        NSString *band = lead[@"intent_band"] ?: @"未分类";
+        NSString *statusBand = [lead[@"status_label"] isKindOfClass:NSString.class] ? lead[@"status_label"] : @"";
+        NSString *band = statusBand.length ? statusBand : (lead[@"intent_band"] ?: @"未分类");
         distribution[band] = @([distribution[band] integerValue] + 1);
         if ([band isEqualToString:@"高意向"]) highIntent += 1;
         if ([band isEqualToString:@"待激活"]) activation += 1;
         if ([lead[@"recent_contact_ts"] doubleValue] >= cutoff) recent += 1;
     }
-    return @{
-        @"schema_version": @"agent.query.v1",
-        @"account_id": self.snapshot[@"account_id"] ?: @"",
-        @"query": self.lastAgentQuestion ?: @"客户研究任务",
-        @"run": @{ @"run_id": @"agent_query", @"model": self.agentModelPicker.titleOfSelectedItem ?: @"deepseek-v4-flash", @"prompt_version": @"agent_on_demand" },
-        @"metrics": @{ @"customer_total": @(self.visibleLeads.count), @"high_intent": @(highIntent), @"activation_needed": @(activation), @"recent_leads": @(recent), @"distribution": distribution, @"estimated_cost_usd": @"", @"actual_cost_usd": @"" },
-        @"leads": self.visibleLeads ?: @[]
-    };
+    NSMutableDictionary *result = [self.lastAgentResult mutableCopy] ?: [NSMutableDictionary dictionary];
+    result[@"schema_version"] = @"agent.query.v2";
+    result[@"account_id"] = self.snapshot[@"account_id"] ?: @"";
+    result[@"query"] = self.lastAgentQuestion ?: @"智能分析任务";
+    result[@"run"] = @{ @"run_id": @"agent_query", @"model": self.agentModelPicker.titleOfSelectedItem ?: @"deepseek-v4-flash", @"prompt_version": @"smart_analysis_v2" };
+    result[@"metrics"] = @{ @"customer_total": @(self.visibleLeads.count), @"high_intent": @(highIntent), @"activation_needed": @(activation), @"recent_leads": @(recent), @"distribution": distribution };
+    result[@"leads"] = self.visibleLeads ?: @[];
+    return result;
 }
 
 - (void)exportWorkbook:(id)sender {
     if (self.agentCommandRunning) { NSBeep(); self.statusLabel.stringValue = @"另一项操作正在进行"; return; }
-    if (!self.visibleLeads.count) { NSBeep(); return; }
-    NSSavePanel *panel = [NSSavePanel savePanel]; panel.nameFieldStringValue = @"DeepSeek客户查询结果.xlsx"; panel.allowedContentTypes = @[];
+    if (!self.lastAgentResult) { NSBeep(); return; }
+    NSAlert *optionsAlert = [[NSAlert alloc] init];
+    optionsAlert.messageText = @"导出自适应分析报告";
+    optionsAlert.informativeText = [NSString stringWithFormat:@"将按“%@”自动组织结果、统计、待办和证据字段。", self.lastAgentResult[@"result_title"] ?: @"智能分析"];
+    NSPopUpButton *formatPicker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    [formatPicker addItemsWithTitles:@[@"Excel 工作簿", @"PDF 报告", @"文字摘要"]];
+    NSButton *(^check)(NSString *, BOOL) = ^NSButton *(NSString *title, BOOL state) {
+        NSButton *button = [NSButton checkboxWithTitle:title target:nil action:nil]; button.state = state ? NSControlStateValueOn : NSControlStateValueOff; return button;
+    };
+    NSButton *evidenceCheck = check(@"包含原文证据与前后消息", YES);
+    NSButton *statisticsCheck = check(@"包含精确互动统计", YES);
+    NSButton *followupsCheck = check(@"包含后续分析建议", YES);
+    NSButton *chartCheck = check(@"包含可编辑统计图表（Excel）", YES);
+    NSStackView *stack = [NSStackView stackViewWithViews:@[formatPicker, evidenceCheck, statisticsCheck, followupsCheck, chartCheck]];
+    stack.orientation = NSUserInterfaceLayoutOrientationVertical; stack.alignment = NSLayoutAttributeLeading; stack.spacing = 8; stack.frame = NSMakeRect(0, 0, 420, 142);
+    [formatPicker.widthAnchor constraintEqualToConstant:220].active = YES;
+    optionsAlert.accessoryView = stack; [optionsAlert addButtonWithTitle:@"继续"]; [optionsAlert addButtonWithTitle:@"取消"];
+    if ([optionsAlert runModal] != NSAlertFirstButtonReturn) return;
+    NSInteger format = formatPicker.indexOfSelectedItem;
+    NSString *extension = format == 0 ? @"xlsx" : (format == 1 ? @"pdf" : @"txt");
+    NSSavePanel *panel = [NSSavePanel savePanel]; panel.nameFieldStringValue = [NSString stringWithFormat:@"%@.%@", self.lastAgentResult[@"result_title"] ?: @"智能分析报告", extension]; panel.allowedContentTypes = @[];
     if ([panel runModal] != NSModalResponseOK) return;
-    NSError *error = nil;
-    NSDictionary *exportSnapshot = [self agentExportSnapshot];
-    NSData *snapshotData = [NSJSONSerialization dataWithJSONObject:exportSnapshot options:0 error:&error];
-    if (!snapshotData) { self.statusLabel.stringValue = error.localizedDescription ?: @"无法准备导出数据"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
-    NSString *snapshotPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"wechat-leads-%@.json", NSUUID.UUID.UUIDString]];
-    if (![snapshotData writeToFile:snapshotPath options:NSDataWritingAtomic error:&error]) { self.statusLabel.stringValue = error.localizedDescription ?: @"无法准备导出数据"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+    NSMutableDictionary *exportSnapshot = [[self agentExportSnapshot] mutableCopy];
+    NSDictionary *reportOptions = @{
+        @"include_evidence": @(evidenceCheck.state == NSControlStateValueOn),
+        @"include_statistics": @(statisticsCheck.state == NSControlStateValueOn),
+        @"include_followups": @(followupsCheck.state == NSControlStateValueOn),
+        @"include_chart": @(chartCheck.state == NSControlStateValueOn),
+    };
+    exportSnapshot[@"report_options"] = reportOptions;
+    NSString *outputPath = panel.URL.path;
+    if (format == 1) {
+        self.agentCommandRunning = YES; self.statusLabel.stringValue = @"正在生成 PDF…"; self.statusLabel.textColor = NSColor.systemOrangeColor;
+        self.agentActivityIndicator.hidden = NO; [self.agentActivityIndicator startAnimation:nil];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            BOOL written = WriteAnalysisPDF(exportSnapshot, outputPath, reportOptions);
+            dispatch_async(dispatch_get_main_queue(), ^{ self.agentCommandRunning = NO; [self.agentActivityIndicator stopAnimation:nil]; self.agentActivityIndicator.hidden = YES; self.statusLabel.stringValue = written ? @"PDF 已导出" : @"PDF 导出失败"; self.statusLabel.textColor = written ? NSColor.systemGreenColor : NSColor.systemRedColor; });
+        });
+        return;
+    }
+    if (format == 2) {
+        self.agentCommandRunning = YES; self.statusLabel.stringValue = @"正在生成文字摘要…"; self.statusLabel.textColor = NSColor.systemOrangeColor;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSMutableString *text = [NSMutableString stringWithFormat:@"%@\n\n任务：%@\n\n%@\n", exportSnapshot[@"result_title"] ?: @"智能分析报告", exportSnapshot[@"query"] ?: @"", exportSnapshot[@"answer"] ?: @""];
+            for (NSDictionary *section in exportSnapshot[@"sections"] ?: @[]) { [text appendFormat:@"\n%@（置信度 %@%%）\n%@\n支持证据：%@\n反例证据：%@\n", section[@"title"] ?: @"分析", section[@"confidence"] ?: @0, section[@"content"] ?: @"", [section[@"evidence_ids"] componentsJoinedByString:@"、"] ?: @"", [section[@"counter_evidence_ids"] componentsJoinedByString:@"、"] ?: @""]; }
+            NSArray *structuredItems = [exportSnapshot[@"structured_items"] isKindOfClass:NSArray.class] ? exportSnapshot[@"structured_items"] : @[];
+            if (structuredItems.count) { [text appendString:@"\n时间线与待办\n"]; for (NSDictionary *item in structuredItems) [text appendFormat:@"• %@  %@  %@  %@\n", item[@"date"] ?: @"", item[@"status"] ?: @"", item[@"subject"] ?: @"", item[@"content"] ?: @""]; }
+            if ([reportOptions[@"include_statistics"] boolValue]) { [text appendString:@"\n精确互动统计\n"]; for (NSDictionary *lead in exportSnapshot[@"leads"] ?: @[]) { NSDictionary *stats = [lead[@"conversation_stats"] isKindOfClass:NSDictionary.class] ? lead[@"conversation_stats"] : @{}; [text appendFormat:@"%@：共 %@ 条（对方 %@ / 我方 %@），%@ 个活跃日，对方中位回复 %@ 分钟，我方 %@ 分钟\n", lead[@"display_name"] ?: @"联系人", stats[@"message_count"] ?: @0, stats[@"incoming_count"] ?: @0, stats[@"outgoing_count"] ?: @0, stats[@"active_days"] ?: @0, stats[@"their_median_response_minutes"] ?: @"—", stats[@"my_median_response_minutes"] ?: @"—"]; } }
+            if ([reportOptions[@"include_evidence"] boolValue]) { [text appendString:@"\n证据明细\n"]; NSMutableSet *seen = [NSMutableSet set]; for (NSDictionary *lead in exportSnapshot[@"leads"] ?: @[]) { for (NSDictionary *evidence in lead[@"evidence"] ?: @[]) { NSString *evidenceID = evidence[@"evidence_id"] ?: @""; if ([seen containsObject:evidenceID]) continue; [seen addObject:evidenceID]; [text appendFormat:@"\n%@  %@  [%@] %@\n%@\n", evidenceID, evidence[@"time"] ?: @"", evidence[@"direction"] ?: @"", evidence[@"sender"] ?: @"", evidence[@"content"] ?: @""]; NSArray *context = [evidence[@"context"] isKindOfClass:NSArray.class] ? evidence[@"context"] : @[]; for (NSDictionary *item in context) [text appendFormat:@"%@ %@ [%@] %@：%@\n", [item[@"is_target"] boolValue] ? @"▶" : @" ", item[@"time"] ?: @"", item[@"direction"] ?: @"", item[@"sender"] ?: @"", item[@"content"] ?: @""]; } } }
+            NSArray *limitations = [exportSnapshot[@"limitations"] isKindOfClass:NSArray.class] ? exportSnapshot[@"limitations"] : @[]; if (limitations.count) { [text appendString:@"\n边界说明\n"]; for (NSString *item in limitations) [text appendFormat:@"• %@\n", item]; }
+            if ([reportOptions[@"include_followups"] boolValue]) for (NSString *item in exportSnapshot[@"suggested_followups"] ?: @[]) [text appendFormat:@"\n建议继续：%@", item];
+            NSError *writeError = nil; BOOL written = [text writeToFile:outputPath atomically:YES encoding:NSUTF8StringEncoding error:&writeError];
+            dispatch_async(dispatch_get_main_queue(), ^{ self.agentCommandRunning = NO; self.statusLabel.stringValue = written ? @"文字摘要已导出" : (writeError.localizedDescription ?: @"文字摘要导出失败"); self.statusLabel.textColor = written ? NSColor.systemGreenColor : NSColor.systemRedColor; });
+        });
+        return;
+    }
+    NSError *serializationError = nil;
+    NSData *snapshotData = [NSJSONSerialization dataWithJSONObject:exportSnapshot options:0 error:&serializationError];
+    if (!snapshotData) { self.statusLabel.stringValue = serializationError.localizedDescription ?: @"无法准备导出数据"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
     NSString *resourcePath = [NSBundle mainBundle].resourcePath;
-    NSTask *task = [[NSTask alloc] init];
-    self.agentCommandRunning = YES;
-    self.activeAgentTask = task;
-    task.executableURL = [NSURL fileURLWithPath:[resourcePath stringByAppendingPathComponent:@"Node/node"]];
-    task.arguments = @[[resourcePath stringByAppendingPathComponent:@"Export/build_lead_workbook.mjs"], snapshotPath, panel.URL.path];
-    NSPipe *pipe = [NSPipe pipe]; task.standardOutput = pipe; task.standardError = pipe;
-    if (![task launchAndReturnError:&error]) { self.activeAgentTask = nil; self.agentCommandRunning = NO; [[NSFileManager defaultManager] removeItemAtPath:snapshotPath error:nil]; self.statusLabel.stringValue = error.localizedDescription; self.statusLabel.textColor = NSColor.systemRedColor; return; }
-    NSData *outputData = [self drainPipe:pipe whileTaskRuns:task];
-    self.activeAgentTask = nil;
-    self.agentCommandRunning = NO;
-    NSString *output = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding] ?: @"";
-    [[NSFileManager defaultManager] removeItemAtPath:snapshotPath error:nil];
-    self.statusLabel.stringValue = task.terminationStatus == 0 ? @"Excel 已导出" : (output.length ? output : @"Excel 导出失败");
-    self.statusLabel.textColor = task.terminationStatus == 0 ? NSColor.systemGreenColor : NSColor.systemRedColor;
+    self.agentCommandRunning = YES; self.statusLabel.stringValue = @"正在生成 Excel…"; self.statusLabel.textColor = NSColor.systemOrangeColor;
+    self.agentActivityIndicator.hidden = NO; [self.agentActivityIndicator startAnimation:nil];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSTask *task = [[NSTask alloc] init]; self.activeAgentTask = task;
+        task.executableURL = [NSURL fileURLWithPath:[resourcePath stringByAppendingPathComponent:@"Node/node"]];
+        task.arguments = @[[resourcePath stringByAppendingPathComponent:@"Export/build_lead_workbook.mjs"], @"-", outputPath];
+        NSPipe *pipe = [NSPipe pipe]; NSPipe *inputPipe = [NSPipe pipe]; task.standardOutput = pipe; task.standardError = pipe; task.standardInput = inputPipe;
+        NSError *launchError = nil;
+        if (![task launchAndReturnError:&launchError]) { dispatch_async(dispatch_get_main_queue(), ^{ self.activeAgentTask = nil; self.agentCommandRunning = NO; [self.agentActivityIndicator stopAnimation:nil]; self.agentActivityIndicator.hidden = YES; self.statusLabel.stringValue = launchError.localizedDescription ?: @"Excel 导出失败"; self.statusLabel.textColor = NSColor.systemRedColor; }); return; }
+        [inputPipe.fileHandleForWriting writeData:snapshotData]; [inputPipe.fileHandleForWriting closeFile];
+        NSData *outputData = [self drainPipe:pipe whileTaskRuns:task]; NSString *output = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding] ?: @""; int exportStatus = task.terminationStatus;
+        dispatch_async(dispatch_get_main_queue(), ^{ self.activeAgentTask = nil; self.agentCommandRunning = NO; [self.agentActivityIndicator stopAnimation:nil]; self.agentActivityIndicator.hidden = YES; self.statusLabel.stringValue = exportStatus == 0 ? @"Excel 已导出" : (output.length ? output : @"Excel 导出失败"); self.statusLabel.textColor = exportStatus == 0 ? NSColor.systemGreenColor : NSColor.systemRedColor; });
+    });
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
@@ -1603,22 +2125,96 @@ int main(int argc, const char *argv[]) {
         application.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
         WorkspaceController *controller = [[WorkspaceController alloc] init];
         NSString *previewPath = nil;
+        NSString *agentPreviewPath = nil;
+        NSString *agentResultPreviewPath = nil;
         NSString *dashboardPreviewPath = nil;
         NSString *searchPreviewPath = nil;
+        NSString *reportPDFPath = nil;
         BOOL launchSmoke = NO;
         BOOL uiSmoke = NO;
         for (int index = 1; index < argc; index++) {
             NSString *argument = [NSString stringWithUTF8String:argv[index]];
             if ([argument isEqualToString:@"--snapshot"] && index + 1 < argc) controller.snapshotPath = [NSString stringWithUTF8String:argv[++index]];
             else if ([argument isEqualToString:@"--render-preview"] && index + 1 < argc) previewPath = [NSString stringWithUTF8String:argv[++index]];
+            else if ([argument isEqualToString:@"--render-agent-preview"] && index + 1 < argc) agentPreviewPath = [NSString stringWithUTF8String:argv[++index]];
+            else if ([argument isEqualToString:@"--render-agent-result-preview"] && index + 1 < argc) agentResultPreviewPath = [NSString stringWithUTF8String:argv[++index]];
             else if ([argument isEqualToString:@"--render-dashboard-preview"] && index + 1 < argc) dashboardPreviewPath = [NSString stringWithUTF8String:argv[++index]];
             else if ([argument isEqualToString:@"--render-search-preview"] && index + 1 < argc) searchPreviewPath = [NSString stringWithUTF8String:argv[++index]];
+            else if ([argument isEqualToString:@"--render-report-pdf"] && index + 1 < argc) reportPDFPath = [NSString stringWithUTF8String:argv[++index]];
             else if ([argument isEqualToString:@"--smoke"]) launchSmoke = YES;
             else if ([argument isEqualToString:@"--ui-smoke"]) uiSmoke = YES;
+        }
+        if (reportPDFPath.length) {
+            NSDictionary *sample = @{
+                @"result_title": @"杨凯互动画像与跟进建议", @"query": @"杨凯常说什么，他是怎样的人？",
+                @"answer": @"从当前聊天样本看，杨凯表达直接、重视执行与交付，也会主动确认关键节点。",
+                @"sections": @[
+                    @{@"title": @"沟通方式", @"content": @"常用简短确认句，讨论任务时直接给出下一步。", @"confidence": @92, @"evidence_ids": @[@"e_001"]},
+                    @{@"title": @"关注重点", @"content": @"更频繁关注进度、结果和时间安排。", @"confidence": @86, @"evidence_ids": @[@"e_002"]},
+                ],
+                @"leads": @[@{@"display_name": @"杨凯", @"conversation_stats": @{@"message_count": @1524, @"incoming_count": @781, @"outgoing_count": @743, @"active_days": @208, @"their_median_response_minutes": @8.5, @"my_median_response_minutes": @11.0}, @"evidence": @[
+                    @{@"evidence_id": @"e_001", @"time": @"2026-08-03 10:20", @"direction": @"对方", @"sender": @"杨凯", @"content": @"先把这件事做完，下午我来确认结果。"},
+                    @{@"evidence_id": @"e_002", @"time": @"2026-08-05 16:42", @"direction": @"对方", @"sender": @"杨凯", @"content": @"这个节点什么时候能交付？"},
+                ]}],
+                @"structured_items": @[@{@"date": @"2026-08-03", @"status": @"已确认", @"subject": @"项目推进", @"content": @"下午确认结果"}],
+                @"limitations": @[@"结论仅基于当前同步的双向聊天样本。"],
+                @"suggested_followups": @[@"比较最近半年与上一阶段的沟通变化", @"提取尚未完成的承诺事项"],
+            };
+            NSDictionary *options = @{@"include_evidence": @YES, @"include_statistics": @YES, @"include_followups": @YES, @"include_chart": @YES};
+            BOOL written = WriteAnalysisPDF(sample, reportPDFPath, options);
+            PrintDiagnostic(@"report_pdf", written ? @"passed" : @"failed", written ? @"ANALYSIS_PDF_WRITTEN" : @"ANALYSIS_PDF_FAILED", reportPDFPath);
+            return written ? 0 : 1;
         }
         application.delegate = controller;
         [application finishLaunching];
         [controller applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:application]];
+        if (agentPreviewPath.length) {
+            NSDictionary<NSString *, NSString *> *progress = @{
+                @"planning": @"理解任务与时间范围",
+                @"retrieval": @"证据召回 · 扫描 276 个对话，召回 231 个候选（183 天）",
+                @"analysis": @"语义复核 · 已完成 5/15 批，共 231 个候选",
+            };
+            [controller setAgentTranscriptContent:[controller agentProgressTranscriptForQuestion:@"找出近半年和我有创业讨论的人" progress:progress activeStage:@"analysis"]];
+            controller.statusLabel.stringValue = @"语义复核 · 5/15 批";
+            controller.statusLabel.textColor = NSColor.systemOrangeColor;
+            controller.agentActivityIndicator.hidden = NO;
+            [controller.agentActivityIndicator startAnimation:nil];
+            [controller.window.contentView layoutSubtreeIfNeeded];
+            [controller.window displayIfNeeded];
+            BOOL written = WriteWindowPNG(controller.window, agentPreviewPath);
+            PrintDiagnostic(@"agent_preview", written ? @"passed" : @"failed", written ? @"NATIVE_AGENT_PREVIEW_WRITTEN" : @"NATIVE_AGENT_PREVIEW_FAILED", agentPreviewPath);
+            return written ? 0 : 1;
+        }
+        if (agentResultPreviewPath.length) {
+            controller.lastAgentResult = @{
+                @"sections": @[
+                    @{@"title": @"沟通方式", @"content": @"表达直接，会主动确认任务节点和交付结果。", @"confidence": @92, @"evidence_ids": @[@"e_001"], @"counter_evidence_ids": @[]},
+                    @{@"title": @"压力下的变化", @"content": @"时间紧张时句子更短，追问频率上升，但仍聚焦事情本身。", @"confidence": @84, @"evidence_ids": @[@"e_002"], @"counter_evidence_ids": @[@"e_003"]},
+                ],
+                @"structured_items": @[@{@"date": @"2026-08-03", @"status": @"待确认", @"content": @"下午确认交付结果"}],
+                @"limitations": @[@"结论仅基于当前已同步的双向聊天记录。"],
+                @"suggested_followups": @[@"比较最近半年与上一阶段的沟通变化", @"提取尚未完成的承诺事项"],
+            };
+            controller.visibleLeads = @[@{
+                @"display_name": @"杨凯",
+                @"conversation_stats": @{@"message_count": @1524, @"active_days": @208, @"their_median_response_minutes": @8.5, @"my_median_response_minutes": @11.0},
+                @"evidence": @[
+                    @{@"evidence_id": @"e_001", @"time": @"2026-08-03 10:20", @"direction": @"对方", @"sender": @"杨凯", @"content": @"先把这件事做完，下午我来确认结果。", @"context": @[@{@"time": @"2026-08-03 10:18", @"direction": @"我方", @"sender": @"我", @"content": @"我们先处理当前版本。", @"is_target": @NO}, @{@"time": @"2026-08-03 10:20", @"direction": @"对方", @"sender": @"杨凯", @"content": @"先把这件事做完，下午我来确认结果。", @"is_target": @YES}]},
+                    @{@"evidence_id": @"e_002", @"time": @"2026-08-05 16:42", @"direction": @"对方", @"sender": @"杨凯", @"content": @"这个节点什么时候能交付？", @"context": @[]},
+                    @{@"evidence_id": @"e_003", @"time": @"2026-08-06 09:12", @"direction": @"对方", @"sender": @"杨凯", @"content": @"不着急，先把问题查清楚。", @"context": @[]},
+                ],
+            }];
+            controller.allLeads = controller.visibleLeads;
+            NSArray *trace = @[@"理解任务 · 联系人杨凯，分析沟通方式", @"证据召回 · 扫描 276 个对话，锁定 1 位", @"语义复核 · 6 批，确认 1 位", @"覆盖审计 · 找回 0 位，移除 0 位"];
+            [controller setAgentTranscriptContent:[controller agentCompletedTranscriptForQuestion:@"杨凯在压力下的沟通方式有什么变化？" trace:trace reply:@"压力增加时，他会缩短句子并增加进度确认，但没有足够证据支持他会转向情绪化表达。" summary:@"" resultTitle:@"杨凯的压力沟通画像" resultCount:1]];
+            controller.statusLabel.stringValue = @"完成 · 杨凯的压力沟通画像";
+            controller.statusLabel.textColor = NSColor.systemGreenColor;
+            [controller.window.contentView layoutSubtreeIfNeeded];
+            [controller.window displayIfNeeded];
+            BOOL written = WriteWindowPNG(controller.window, agentResultPreviewPath);
+            PrintDiagnostic(@"agent_result_preview", written ? @"passed" : @"failed", written ? @"NATIVE_AGENT_RESULT_PREVIEW_WRITTEN" : @"NATIVE_AGENT_RESULT_PREVIEW_FAILED", agentResultPreviewPath);
+            return written ? 0 : 1;
+        }
         if (searchPreviewPath.length) {
             [controller showMessageSearchView];
             [controller.window.contentView layoutSubtreeIfNeeded];

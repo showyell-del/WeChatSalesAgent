@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 from decimal import Decimal
 
-from agent_core.chatlog_client import ChatlogClient
+from agent_core.chatlog_client import ChatlogClient, ChatlogError
 from agent_core.analysis_store import AnalysisStore
 from agent_core.corpus_builder import (
     build_corpus,
@@ -67,6 +67,40 @@ class Phase2CorpusTests(unittest.TestCase):
         self.assertEqual(
             [item["is_self"] for item in messages], [False, False, False, True]
         )
+
+    def test_history_growth_is_recalled_by_increasing_limit_containment(self):
+        class GrowingClient(ChatlogClient):
+            def __init__(self):
+                self.calls = {False: 0, True: 0}
+
+            def history_page(self, chat, since, until, limit, offset, is_self):
+                self.calls[is_self] += 1
+                count = 3 if not is_self and self.calls[is_self] > 1 else 2
+                source = [
+                    {
+                        "local_id": index,
+                        "timestamp": index,
+                        "sender": "sender",
+                        "content": str(index),
+                    }
+                    for index in range(count)
+                ]
+                return {"total_count": len(source), "messages": source[:limit]}
+
+        messages = GrowingClient().history("wxid_demo", 0, 100, page_size=2)
+        self.assertEqual([item["local_id"] for item in messages], [0, 0, 1, 1, 2])
+
+    def test_history_rejects_non_contained_changes(self):
+        class ChangingClient(ChatlogClient):
+            def history_page(self, chat, since, until, limit, offset, is_self):
+                if limit == 2:
+                    source = [{"local_id": 1}, {"local_id": 2}]
+                else:
+                    source = [{"local_id": 2}, {"local_id": 3}, {"local_id": 4}]
+                return {"total_count": len(source), "messages": source[:limit]}
+
+        with self.assertRaisesRegex(ChatlogError, "changed during full retrieval"):
+            ChangingClient().history("wxid_demo", 0, 100, page_size=2)
 
     def test_static_filters_and_bidirectional_requirement(self):
         self.assertEqual(

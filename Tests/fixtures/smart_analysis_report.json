@@ -1,0 +1,39 @@
+{
+  "schema_version": "agent.query.v2",
+  "account_id": "wxid_demo",
+  "query": "比较杨凯和小周的沟通方式，并给出后续跟进建议",
+  "task_type": "comparison",
+  "result_title": "联系人沟通方式比较",
+  "answer": "杨凯更关注执行节点，小周更常围绕方案细节展开讨论。",
+  "run": {"model": "deepseek-v4-flash"},
+  "sections": [
+    {"title": "沟通节奏", "content": "杨凯偏短句确认，小周更常连续补充上下文。", "confidence": 91, "evidence_ids": ["e_yang_1", "e_zhou_1"], "counter_evidence_ids": []},
+    {"title": "建议动作", "content": "与杨凯先对齐节点，与小周先发送完整方案再讨论。", "confidence": 86, "evidence_ids": ["e_yang_2", "e_zhou_2"], "counter_evidence_ids": []}
+  ],
+  "limitations": ["结论仅基于当前同步的双向聊天样本。"],
+  "suggested_followups": ["比较两人最近半年的活跃变化", "提取两人尚未完成的承诺事项"],
+  "structured_items": [],
+  "report_options": {"include_evidence": true, "include_statistics": true, "include_followups": true, "include_chart": true},
+  "leads": [
+    {
+      "customer_id": "yang", "display_name": "杨凯", "intent_score": 92, "intent_band": "", "recent_contact_ts": 1786464000,
+      "recent_contact": "2026-08-12 00:00", "need": "", "obstacles": "", "contact": "", "suggested_action": "先确认交付节点", "headline": "执行导向", "summary": "关注进度与交付",
+      "insights": [{"label": "沟通方式", "value": "短句确认并推动下一步", "confidence": 92, "evidence_ids": ["e_yang_1", "e_yang_2"], "counter_evidence_ids": []}],
+      "conversation_stats": {"message_count": 1524, "incoming_count": 781, "outgoing_count": 743, "active_days": 208, "their_conversation_starts": 74, "my_conversation_starts": 61, "their_median_response_minutes": 8.5, "my_median_response_minutes": 11.0, "first_contact": "2023-01-02 10:00", "last_contact": "2026-08-12 00:00", "monthly_activity": [{"month": "2026-07", "message_count": 48}, {"month": "2026-08", "message_count": 56}]},
+      "evidence": [
+        {"evidence_id": "e_yang_1", "time": "2026-08-03 10:20", "timestamp": 1785723600, "direction": "对方", "sender": "杨凯", "content": "先把这件事做完。", "context": [{"time": "2026-08-03 10:18", "direction": "我方", "sender": "我", "content": "今天先处理哪个？", "is_target": false}, {"time": "2026-08-03 10:20", "direction": "对方", "sender": "杨凯", "content": "先把这件事做完。", "is_target": true}]},
+        {"evidence_id": "e_yang_2", "time": "2026-08-05 16:42", "timestamp": 1785919320, "direction": "对方", "sender": "杨凯", "content": "这个节点什么时候能交付？", "context": []}
+      ]
+    },
+    {
+      "customer_id": "zhou", "display_name": "小周", "intent_score": 87, "intent_band": "", "recent_contact_ts": 1786550400,
+      "recent_contact": "2026-08-13 00:00", "need": "", "obstacles": "", "contact": "", "suggested_action": "先发送完整方案", "headline": "方案导向", "summary": "关注方案细节",
+      "insights": [{"label": "沟通方式", "value": "倾向先补充背景再讨论方案", "confidence": 87, "evidence_ids": ["e_zhou_1", "e_zhou_2"], "counter_evidence_ids": []}],
+      "conversation_stats": {"message_count": 984, "incoming_count": 510, "outgoing_count": 474, "active_days": 151, "their_conversation_starts": 52, "my_conversation_starts": 48, "their_median_response_minutes": 14.0, "my_median_response_minutes": 9.0, "first_contact": "2024-02-10 09:30", "last_contact": "2026-08-13 00:00", "monthly_activity": [{"month": "2026-07", "message_count": 31}, {"month": "2026-08", "message_count": 39}]},
+      "evidence": [
+        {"evidence_id": "e_zhou_1", "time": "2026-08-06 11:08", "timestamp": 1785985680, "direction": "对方", "sender": "小周", "content": "我先把背景和约束整理完整。", "context": []},
+        {"evidence_id": "e_zhou_2", "time": "2026-08-06 11:12", "timestamp": 1785985920, "direction": "对方", "sender": "小周", "content": "然后我们逐项确认方案。", "context": []}
+      ]
+    }
+  ]
+}

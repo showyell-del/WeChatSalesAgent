@@ -153,6 +153,8 @@ def build_corpus(
             store.commit_conversation()
         store.publish_run(corpus_id, account_id)
         counts = store.run_counts(corpus_id)
+        counts["purged_corpora"] = store.purge_old_runs(account_id, corpus_id)
+        store.compact_storage()
         counts.update(
             {
                 "corpus_id": corpus_id,

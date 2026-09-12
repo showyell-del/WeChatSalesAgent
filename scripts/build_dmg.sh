@@ -39,6 +39,7 @@ test -L "$MOUNT_DIR/Applications"
 "$MOUNT_DIR/WeChatSalesAgent.app/Contents/Resources/PythonRuntime/bin/python3" -c 'import frida,pydantic,pydantic_core; assert frida.__version__=="16.7.19"; assert pydantic.VERSION=="2.12.5"; assert pydantic_core.__version__=="2.41.5"'
 test -f "$MOUNT_DIR/WeChatSalesAgent.app/Contents/Resources/Chatlog/LICENSE"
 cmp config/build_inputs.json "$MOUNT_DIR/WeChatSalesAgent.app/Contents/Resources/build_inputs.json"
+cmp app/Phase0App/WeChatCustomerAnalysis.icns "$MOUNT_DIR/WeChatSalesAgent.app/Contents/Resources/WeChatCustomerAnalysis.icns"
 "$MOUNT_DIR/WeChatSalesAgent.app/Contents/MacOS/WeChatSalesAgent" --smoke
 /usr/bin/hdiutil detach "$MOUNT_DIR" -quiet
 MOUNTED=0

@@ -34,6 +34,46 @@ CREATE TABLE IF NOT EXISTS agent_settings (
     updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    session_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_turns (
+    turn_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(session_id) REFERENCES agent_sessions(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_turns_session_created
+ON agent_turns(session_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_account_updated
+ON agent_sessions(account_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS saved_analyses (
+    saved_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,
+    account_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    question TEXT NOT NULL,
+    task_type TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    last_evidence_ts INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(session_id) REFERENCES agent_sessions(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_analyses_account_updated
+ON saved_analyses(account_id, updated_at);
+
 CREATE TABLE IF NOT EXISTS analysis_runs (
     run_id TEXT PRIMARY KEY,
     corpus_id TEXT NOT NULL,
@@ -157,6 +197,217 @@ class AnalysisStore:
                 "INSERT OR REPLACE INTO agent_settings VALUES(1,?,?)",
                 (model, int(time.time())),
             )
+
+    def ensure_agent_session(self, account_id: str, session_id: str = "") -> str:
+        if session_id:
+            row = self.conn.execute(
+                "SELECT account_id FROM agent_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            if row is None or str(row["account_id"]) != account_id:
+                raise RuntimeError("AGENT_SESSION_INVALID")
+            return session_id
+        session_id = "agent_" + uuid.uuid4().hex
+        now = int(time.time())
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO agent_sessions VALUES(?,?,?,?,?)",
+                (session_id, account_id, "新分析", now, now),
+            )
+        return session_id
+
+    def agent_context(self, session_id: str, limit: int = 6) -> List[Dict]:
+        rows = self.conn.execute(
+            """SELECT question,result_json FROM agent_turns WHERE session_id=?
+               ORDER BY created_at DESC,rowid DESC LIMIT ?""",
+            (session_id, max(1, min(12, int(limit)))),
+        ).fetchall()
+        context = []
+        for row in reversed(rows):
+            result = json.loads(row["result_json"])
+            context.append(
+                {
+                    "question": row["question"],
+                    "task_type": result.get("task_type"),
+                    "result_title": result.get("result_title"),
+                    "answer": result.get("answer"),
+                    "subject_names": result.get("subject_names") or [],
+                    "suggested_followups": result.get("suggested_followups") or [],
+                }
+            )
+        return context
+
+    @staticmethod
+    def _compact_agent_result(result: Dict) -> Dict:
+        return {
+            "schema_version": result.get("schema_version"),
+            "task_type": result.get("task_type"),
+            "result_title": result.get("result_title"),
+            "answer": result.get("answer"),
+            "subject_names": result.get("subject_names") or [],
+            "suggested_followups": result.get("suggested_followups") or [],
+        }
+
+    def _compact_session_turns(self, session_id: str) -> None:
+        rows = self.conn.execute(
+            "SELECT turn_id,result_json FROM agent_turns WHERE session_id=?", (session_id,)
+        ).fetchall()
+        for row in rows:
+            result = json.loads(row["result_json"])
+            compact = self._compact_agent_result(result)
+            if result != compact:
+                self.conn.execute(
+                    "UPDATE agent_turns SET result_json=? WHERE turn_id=?",
+                    (json.dumps(compact, ensure_ascii=False, sort_keys=True), row["turn_id"]),
+                )
+
+    def _prune_unsaved_sessions(self, account_id: str, keep: int = 100) -> None:
+        rows = self.conn.execute(
+            """SELECT s.session_id FROM agent_sessions s
+               LEFT JOIN saved_analyses a ON a.session_id=s.session_id
+               WHERE s.account_id=? AND a.saved_id IS NULL
+               ORDER BY s.updated_at DESC,s.session_id DESC LIMIT -1 OFFSET ?""",
+            (account_id, max(1, int(keep))),
+        ).fetchall()
+        for row in rows:
+            self.conn.execute("DELETE FROM agent_turns WHERE session_id=?", (row["session_id"],))
+            self.conn.execute("DELETE FROM agent_sessions WHERE session_id=?", (row["session_id"],))
+
+    def add_agent_turn(self, session_id: str, question: str, result: Dict):
+        now = int(time.time())
+        with self.conn:
+            self._compact_session_turns(session_id)
+            self.conn.execute(
+                "INSERT INTO agent_turns VALUES(?,?,?,?,?)",
+                (
+                    "turn_" + uuid.uuid4().hex,
+                    session_id,
+                    question,
+                    json.dumps(result, ensure_ascii=False, sort_keys=True),
+                    now,
+                ),
+            )
+            self.conn.execute(
+                "UPDATE agent_sessions SET title=?,updated_at=? WHERE session_id=?",
+                (str(result.get("result_title") or question)[:80], now, session_id),
+            )
+            row = self.conn.execute(
+                "SELECT account_id FROM agent_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            if row is not None:
+                self._prune_unsaved_sessions(str(row["account_id"]))
+
+    def _account_corpus_watermark(self, account_id: str) -> int:
+        corpus = self.published_corpus(account_id)
+        row = self.conn.execute(
+            "SELECT coalesce(max(timestamp),0) AS watermark FROM evidence WHERE corpus_id=?",
+            (corpus["corpus_id"],),
+        ).fetchone()
+        return int(row["watermark"] or 0)
+
+    def account_corpus_watermark(self, account_id: str) -> int:
+        return self._account_corpus_watermark(account_id)
+
+    def save_agent_session(self, session_id: str) -> Dict:
+        row = self.conn.execute(
+            """SELECT s.account_id,s.title,t.question,t.result_json
+               FROM agent_sessions s JOIN agent_turns t ON t.session_id=s.session_id
+               WHERE s.session_id=? ORDER BY t.created_at DESC,t.rowid DESC LIMIT 1""",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("AGENT_SESSION_EMPTY")
+        result = json.loads(row["result_json"])
+        saved_id = "saved_" + uuid.uuid4().hex
+        now = int(time.time())
+        values = (
+            saved_id,
+            session_id,
+            row["account_id"],
+            row["title"],
+            row["question"],
+            result.get("task_type") or "general_search",
+            row["result_json"],
+            self._account_corpus_watermark(str(row["account_id"])),
+            now,
+            now,
+        )
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO saved_analyses VALUES(?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(session_id) DO UPDATE SET
+                   title=excluded.title,question=excluded.question,task_type=excluded.task_type,
+                   result_json=excluded.result_json,last_evidence_ts=excluded.last_evidence_ts,
+                   updated_at=excluded.updated_at""",
+                values,
+            )
+            self._compact_session_turns(session_id)
+        return self.saved_analysis_by_session(session_id)
+
+    def saved_analysis_by_session(self, session_id: str) -> Dict:
+        row = self.conn.execute(
+            "SELECT * FROM saved_analyses WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("SAVED_ANALYSIS_MISSING")
+        result = dict(row)
+        result["result"] = json.loads(result.pop("result_json"))
+        return result
+
+    def saved_analysis(self, saved_id: str) -> Dict:
+        row = self.conn.execute(
+            "SELECT * FROM saved_analyses WHERE saved_id=?", (saved_id,)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("SAVED_ANALYSIS_MISSING")
+        result = dict(row)
+        result["result"] = json.loads(result.pop("result_json"))
+        return result
+
+    def list_saved_analyses(self, account_id: str) -> List[Dict]:
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                """SELECT saved_id,session_id,title,question,task_type,last_evidence_ts,updated_at
+                   FROM saved_analyses WHERE account_id=? ORDER BY updated_at DESC""",
+                (account_id,),
+            )
+        ]
+
+    def update_saved_analysis(self, saved_id: str, result: Dict):
+        saved = self.conn.execute(
+            "SELECT account_id FROM saved_analyses WHERE saved_id=?", (saved_id,)
+        ).fetchone()
+        if saved is None:
+            raise RuntimeError("SAVED_ANALYSIS_MISSING")
+        watermark = self._account_corpus_watermark(str(saved["account_id"]))
+        with self.conn:
+            cursor = self.conn.execute(
+                """UPDATE saved_analyses SET title=?,question=?,task_type=?,result_json=?,
+                   last_evidence_ts=?,updated_at=? WHERE saved_id=?""",
+                (
+                    str(result.get("result_title") or "智能分析")[:80],
+                    str(result.get("query") or ""),
+                    str(result.get("task_type") or "general_search"),
+                    json.dumps(result, ensure_ascii=False, sort_keys=True),
+                    watermark,
+                    int(time.time()),
+                    saved_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise RuntimeError("SAVED_ANALYSIS_MISSING")
+
+    def delete_saved_analysis(self, saved_id: str, account_id: str) -> None:
+        row = self.conn.execute(
+            "SELECT session_id FROM saved_analyses WHERE saved_id=? AND account_id=?",
+            (saved_id, account_id),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("SAVED_ANALYSIS_MISSING")
+        with self.conn:
+            self.conn.execute("DELETE FROM saved_analyses WHERE saved_id=?", (saved_id,))
+            self.conn.execute("DELETE FROM agent_turns WHERE session_id=?", (row["session_id"],))
+            self.conn.execute("DELETE FROM agent_sessions WHERE session_id=?", (row["session_id"],))
 
     def configure(self, settings: Dict, profile_json: str):
         now = int(time.time())

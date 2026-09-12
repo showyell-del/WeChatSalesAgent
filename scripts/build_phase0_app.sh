@@ -85,7 +85,7 @@ chmod 755 "$RESOURCES_DIR/Node/node"
 cp scripts/build_lead_workbook.mjs "$RESOURCES_DIR/Export/build_lead_workbook.mjs"
 /usr/bin/ditto --noqtn "$ARTIFACT_TOOL_SOURCE" "$RESOURCES_DIR/Export/node_modules/@oai/artifact-tool"
 
-/usr/bin/clang -fobjc-arc -framework Cocoa -framework Foundation app/Phase0App/main.m -o "$MACOS_DIR/WeChatSalesAgent"
+/usr/bin/clang -fobjc-arc -framework Cocoa -framework Foundation -framework CoreText app/Phase0App/main.m -o "$MACOS_DIR/WeChatSalesAgent"
 
 "$RESOURCES_DIR/PythonRuntime/bin/python3" - <<'PY'
 import frida

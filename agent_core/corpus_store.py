@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS corpus_evidence (
 CREATE INDEX IF NOT EXISTS evidence_by_conversation ON evidence(corpus_id, username, timestamp);
 CREATE INDEX IF NOT EXISTS evidence_by_username ON evidence(username, timestamp);
 CREATE INDEX IF NOT EXISTS facts_by_conversation ON extracted_facts(corpus_id, username, field);
+CREATE INDEX IF NOT EXISTS facts_by_evidence ON extracted_facts(evidence_id);
+CREATE INDEX IF NOT EXISTS corpus_evidence_by_evidence ON corpus_evidence(evidence_id);
 """
 
 
@@ -253,6 +255,86 @@ class CorpusStore:
                     "UPDATE analysis_runs SET status='superseded' WHERE account_id=? AND status='published' AND corpus_id<>?",
                     (account_id, corpus_id),
                 )
+
+    def purge_old_runs(self, account_id: str, current_corpus_id: str) -> int:
+        old_corpora = [
+            str(row["corpus_id"])
+            for row in self.conn.execute(
+                """SELECT corpus_id FROM corpus_runs
+                   WHERE account_id=? AND corpus_id<>? AND status IN ('old','failed')""",
+                (account_id, current_corpus_id),
+            )
+        ]
+        if not old_corpora:
+            return 0
+        tables = {
+            row[0]
+            for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        placeholders = ",".join("?" for _ in old_corpora)
+        with self.conn:
+            if "analysis_runs" in tables:
+                run_ids = [
+                    str(row["run_id"])
+                    for row in self.conn.execute(
+                        "SELECT run_id FROM analysis_runs WHERE corpus_id IN (%s)" % placeholders,
+                        old_corpora,
+                    )
+                ]
+                if run_ids:
+                    run_placeholders = ",".join("?" for _ in run_ids)
+                    for table in ("ai_calls", "lead_results"):
+                        if table in tables:
+                            self.conn.execute(
+                                "DELETE FROM %s WHERE run_id IN (%s)" % (table, run_placeholders),
+                                run_ids,
+                            )
+                    self.conn.execute(
+                        "DELETE FROM analysis_runs WHERE run_id IN (%s)" % run_placeholders,
+                        run_ids,
+                    )
+            if "minor_screenings" in tables:
+                self.conn.execute(
+                    "DELETE FROM minor_screenings WHERE corpus_id IN (%s)" % placeholders,
+                    old_corpora,
+                )
+            for table in ("extracted_facts", "corpus_evidence", "evidence", "corpus_conversations"):
+                self.conn.execute(
+                    "DELETE FROM %s WHERE corpus_id IN (%s)" % (table, placeholders),
+                    old_corpora,
+                )
+            self.conn.execute(
+                "DELETE FROM corpus_runs WHERE corpus_id IN (%s)" % placeholders,
+                old_corpora,
+            )
+            current_generation = self.conn.execute(
+                "SELECT generation_id FROM corpus_runs WHERE corpus_id=?", (current_corpus_id,)
+            ).fetchone()[0]
+            old_generations = [
+                str(row["generation_id"])
+                for row in self.conn.execute(
+                    """SELECT generation_id FROM generations
+                       WHERE account_id=? AND generation_id<>? AND status='old'""",
+                    (account_id, current_generation),
+                )
+            ]
+            if old_generations:
+                generation_placeholders = ",".join("?" for _ in old_generations)
+                for table in ("db_files", "sessions"):
+                    if table in tables:
+                        self.conn.execute(
+                            "DELETE FROM %s WHERE generation_id IN (%s)" % (table, generation_placeholders),
+                            old_generations,
+                        )
+                self.conn.execute(
+                    "DELETE FROM generations WHERE generation_id IN (%s)" % generation_placeholders,
+                    old_generations,
+                )
+        return len(old_corpora)
+
+    def compact_storage(self) -> None:
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.conn.execute("VACUUM")
 
     def run_counts(self, corpus_id: str) -> Dict[str, int]:
         conversation = self.conn.execute(

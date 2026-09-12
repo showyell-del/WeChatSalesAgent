@@ -94,30 +94,47 @@ class ChatlogClient:
     def history(
         self, chat: str, since: int, until: int, page_size: int = 500
     ) -> List[Dict]:
+        if page_size <= 0:
+            raise ChatlogError(
+                "CHATLOG_PAGE_SIZE_INVALID",
+                "Chatlog history page size must be positive.",
+            )
         merged = []
         for is_self in (False, True):
-            offset = 0
-            expected = None
-            direction = []
+            previous_ids = set()
+            limit = page_size
             while True:
-                page = self.history_page(chat, since, until, page_size, offset, is_self)
-                if expected is None:
-                    expected = int(page.get("total_count") or 0)
+                page = self.history_page(chat, since, until, limit, 0, is_self)
+                expected = int(page.get("total_count") or 0)
                 messages = page["messages"]
+                current_ids = set()
                 for item in messages:
-                    row = dict(item)
-                    row["is_self"] = is_self
-                    direction.append(row)
-                offset += len(messages)
-                if not messages or offset >= expected:
+                    identity = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                    if identity in current_ids:
+                        raise ChatlogError(
+                            "CHATLOG_HISTORY_DUPLICATE",
+                            "Chatlog history contains duplicate messages for %s." % chat,
+                        )
+                    current_ids.add(identity)
+                if not previous_ids.issubset(current_ids):
+                    raise ChatlogError(
+                        "CHATLOG_HISTORY_CHANGED",
+                        "Chatlog history changed during full retrieval for %s; sync again."
+                        % chat,
+                    )
+                if len(messages) < limit:
+                    if len(messages) != expected:
+                        raise ChatlogError(
+                            "CHATLOG_HISTORY_PAGINATION_LOSS",
+                            "History response did not match Chatlog total for %s." % chat,
+                        )
+                    for item in messages:
+                        row = dict(item)
+                        row["is_self"] = is_self
+                        merged.append(row)
                     break
-            if len(direction) != expected:
-                raise ChatlogError(
-                    "CHATLOG_HISTORY_PAGINATION_LOSS",
-                    "History pagination count did not match Chatlog total for %s."
-                    % chat,
-                )
-            merged.extend(direction)
+                previous_ids = current_ids
+                limit *= 2
         merged.sort(
             key=lambda item: (
                 int(item.get("timestamp") or 0),

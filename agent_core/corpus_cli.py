@@ -11,11 +11,12 @@ def main(argv=None):
     parser.add_argument("--db", default="runtime/agent_state.sqlite3")
     parser.add_argument("--addr", default="127.0.0.1:5030")
     parser.add_argument("--account-id", required=True)
-    parser.add_argument("--days", type=int, default=183)
+    parser.add_argument("--days", type=int, default=3650)
+    parser.add_argument("--all-history", action="store_true")
     parser.add_argument("--page-size", type=int, default=500)
     args = parser.parse_args(argv)
     until_ts = int(time.time()) + 86400
-    since_ts = until_ts - args.days * 86400
+    since_ts = 0 if args.all_history else until_ts - args.days * 86400
     try:
         result = build_corpus(
             args.db, args.account_id, since_ts, until_ts, args.addr, args.page_size
