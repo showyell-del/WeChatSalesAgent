@@ -13,11 +13,26 @@ STAGE_DIR="$(mktemp -d /tmp/wechat-sales-agent-dmg.XXXXXX)"
 MOUNT_DIR="$(mktemp -d /tmp/wechat-sales-agent-mount.XXXXXX)"
 MOUNTED=0
 
+detach_mount() {
+  local attempt
+  for attempt in {1..20}; do
+    if /usr/bin/hdiutil detach "$MOUNT_DIR" -quiet; then
+      MOUNTED=0
+      return 0
+    fi
+    /bin/sleep 0.25
+  done
+  return 1
+}
+
 cleanup() {
   if [[ "$MOUNTED" -eq 1 ]]; then
-    /usr/bin/hdiutil detach "$MOUNT_DIR" -quiet || true
+    detach_mount || true
   fi
-  rm -rf "$STAGE_DIR" "$MOUNT_DIR"
+  rm -rf "$STAGE_DIR"
+  if [[ "$MOUNTED" -eq 0 ]]; then
+    rm -rf "$MOUNT_DIR"
+  fi
   rm -f "$DMG_CANDIDATE"
 }
 trap cleanup EXIT
@@ -41,8 +56,7 @@ test -f "$MOUNT_DIR/WeChatSalesAgent.app/Contents/Resources/Chatlog/LICENSE"
 cmp config/build_inputs.json "$MOUNT_DIR/WeChatSalesAgent.app/Contents/Resources/build_inputs.json"
 cmp app/Phase0App/WeChatCustomerAnalysis.icns "$MOUNT_DIR/WeChatSalesAgent.app/Contents/Resources/WeChatCustomerAnalysis.icns"
 "$MOUNT_DIR/WeChatSalesAgent.app/Contents/MacOS/WeChatSalesAgent" --smoke
-/usr/bin/hdiutil detach "$MOUNT_DIR" -quiet
-MOUNTED=0
+detach_mount
 
 mv -f "$DMG_CANDIDATE" "$DMG_PATH"
 SHA256="$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')"

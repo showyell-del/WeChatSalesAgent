@@ -52,6 +52,7 @@
   - `git diff --check`
 - 回归测试必须断言发送模块、NativeWorker、profiles、Phase 6 和发送 UI 均不存在。
 - 发布 DMG 必须只读挂载验证签名、内置依赖、Chatlog 许可证和构建清单；成功后删除中间 `.app`。
+- DMG 内 App 完成原生自检后，macOS 可能短暂占用只读挂载卷；发布脚本必须用有界等待完成普通卸载，禁止因一次瞬时 `Resource busy` 丢弃已验证候选包，也禁止用强制卸载掩盖仍在使用卷的真实问题。
 
 ## 当前验证结果
 
@@ -97,7 +98,7 @@
 - 2026-08-02：最终安装版实机重新同步成功，1,206 个微信会话中排除 407 个无双向文字、332 个公众号、214 个群聊、5 个系统会话和 1 个服务会话，剩余 247 个已同步双向私聊。当时本机 `business_profiles=0`、`ai_settings=0`且 DeepSeek Keychain 项不存在，所以 247 未经过任何关键词或 DeepSeek 筛选。
 - Phase 0 quick、无兜底扫描、Phase 4 AppKit 界面、真实 XLSX 导出全部通过。
 - 只读挂载最终 DMG 后确认不存在 `NativeWorker`、`send_cli.py`、`send_daemon.py`、`send_store.py` 或原生 sender。
-- 当前 DMG：`dist/WeChatSalesAgent-MVP-macOS-arm64.dmg`，SHA-256 `b46bebce3d8c2257a391841230a735e07ee2f1125aa3e88756ac8a61e5bee246`，133,151,815 bytes，生成于 2026-09-11 21:26:03 CST；91 项测试、编译检查、锁定依赖、无降级扫描、Phase 0、Phase 4、空白态及 Agent 动画过程态原生截图、只读挂载、签名、Chatlog 许可证、构建清单和 ICNS 一致性均通过，`hdiutil verify` 有效。安装版主程序 SHA-256 为 `2c20744d8698261379d5cab65e009dcaaf0f2b8d62fab49afb516af971ad8be7`、376,624 bytes；安装版 ICNS SHA-256 为 `f2069437380dfd97849817ed2e93648524e4f45ff25e9fd33ffaa5762d46f563`，与项目一致。
+- 当前 DMG：`dist/WeChatSalesAgent-MVP-macOS-arm64.dmg`，SHA-256 `05cf2dd1279d66eab47b684ed9ee831511dc9bc36814b4f48e3e869462246b1b`，133,454,772 bytes，生成于 2026-09-13 02:38:12 CST；108 项测试、编译检查、锁定依赖、无降级扫描、Phase 0、Phase 4、全历史真实同步、真实人物分析、自适应 Excel、空白态及 Agent 动画过程态原生检查、只读挂载、DMG 校验、签名、Chatlog 许可证、构建清单、源码、导出器和 ICNS 一致性均通过。已覆盖安装并从 `/Applications/WeChatSalesAgent.app` 启动，界面显示当前账号已同步 659 个对话；安装版主程序 SHA-256 为 `48f1e7dab78c7e393844728f9c9dbe3ea7fb68dc952bbd59d2285419ced7a825`，安装版 ICNS SHA-256 为 `f2069437380dfd97849817ed2e93648524e4f45ff25e9fd33ffaa5762d46f563`，均与只读挂载包逐字节一致。
 
 ## 交付限制
 
