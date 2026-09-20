@@ -2,6 +2,28 @@
 #import <CoreText/CoreText.h>
 #include <signal.h>
 
+static void InstallMainMenu(void) {
+    NSMenu *mainMenu = [[NSMenu alloc] initWithTitle:@""];
+    NSMenuItem *applicationItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+    [mainMenu addItem:applicationItem];
+    NSMenu *applicationMenu = [[NSMenu alloc] initWithTitle:@"微信客户分析 Agent"];
+    [applicationMenu addItemWithTitle:@"退出微信客户分析 Agent" action:@selector(terminate:) keyEquivalent:@"q"];
+    [mainMenu setSubmenu:applicationMenu forItem:applicationItem];
+
+    NSMenuItem *editItem = [[NSMenuItem alloc] initWithTitle:@"编辑" action:nil keyEquivalent:@""];
+    [mainMenu addItem:editItem];
+    NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"编辑"];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"撤销" action:@selector(undo:) keyEquivalent:@"z"]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"重做" action:@selector(redo:) keyEquivalent:@"Z"]];
+    [editMenu addItem:NSMenuItem.separatorItem];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"剪切" action:@selector(cut:) keyEquivalent:@"x"]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"复制" action:@selector(copy:) keyEquivalent:@"c"]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"粘贴" action:@selector(paste:) keyEquivalent:@"v"]];
+    [editMenu addItem:[[NSMenuItem alloc] initWithTitle:@"全选" action:@selector(selectAll:) keyEquivalent:@"a"]];
+    [mainMenu setSubmenu:editMenu forItem:editItem];
+    NSApp.mainMenu = mainMenu;
+}
+
 static void PolishWorkspace(NSView *view) {
     if ([view isKindOfClass:NSTableView.class]) {
         NSTableView *table = (NSTableView *)view;
@@ -62,15 +84,106 @@ static NSTextField *Label(NSString *text, CGFloat size, NSColor *color, BOOL bol
     return field;
 }
 
-static void AppendAgentText(NSMutableAttributedString *target, NSString *text, NSFont *font, NSColor *color, CGFloat spacing) {
+static NSAttributedStringKey const AgentBubbleAttributeName = @"AgentBubble";
+
+@interface AgentTranscriptView : NSTextView
+@end
+
+@interface AgentTranscriptScrollView : NSScrollView
+@end
+
+@implementation AgentTranscriptScrollView
+- (void)layout {
+    [super layout];
+    NSView *document = self.documentView;
+    CGFloat width = self.contentSize.width;
+    if (!document || width <= 0 || fabs(NSWidth(document.frame) - width) < 0.5) return;
+    NSRect frame = document.frame;
+    frame.size.width = width;
+    frame.size.height = MAX(frame.size.height, self.contentSize.height);
+    document.frame = frame;
+}
+@end
+
+@implementation AgentTranscriptView
+- (void)drawRect:(NSRect)dirtyRect {
+    NSLayoutManager *layoutManager = self.layoutManager;
+    NSTextContainer *textContainer = self.textContainer;
+    if (layoutManager && textContainer) {
+        [layoutManager ensureLayoutForTextContainer:textContainer];
+        NSPoint origin = self.textContainerOrigin;
+        [self.textStorage enumerateAttribute:AgentBubbleAttributeName inRange:NSMakeRange(0, self.textStorage.length) options:0 usingBlock:^(NSString *kind, NSRange range, BOOL *stop) {
+            (void)stop;
+            if (!kind.length || !range.length) return;
+            while (range.length && [[NSCharacterSet newlineCharacterSet] characterIsMember:[self.string characterAtIndex:NSMaxRange(range) - 1]]) range.length -= 1;
+            if (!range.length) return;
+            NSRange glyphRange = [layoutManager glyphRangeForCharacterRange:range actualCharacterRange:nil];
+            __block NSRect bubbleRect = NSZeroRect;
+            __block BOOL hasRect = NO;
+            [layoutManager enumerateLineFragmentsForGlyphRange:glyphRange usingBlock:^(NSRect rect, NSRect usedRect, NSTextContainer *container, NSRange lineGlyphRange, BOOL *lineStop) {
+                (void)rect; (void)usedRect; (void)lineStop;
+                NSRange intersection = NSIntersectionRange(lineGlyphRange, glyphRange);
+                if (!intersection.length) return;
+                NSRect glyphRect = [layoutManager boundingRectForGlyphRange:intersection inTextContainer:container];
+                if (NSIsEmptyRect(glyphRect)) return;
+                bubbleRect = hasRect ? NSUnionRect(bubbleRect, glyphRect) : glyphRect;
+                hasRect = YES;
+            }];
+            if (!hasRect) return;
+            bubbleRect.origin.x += origin.x;
+            bubbleRect.origin.y += origin.y;
+            bubbleRect = NSInsetRect(bubbleRect, -12, -8);
+            bubbleRect.origin.x = MAX(4, bubbleRect.origin.x);
+            bubbleRect.size.width = MIN(bubbleRect.size.width, NSMaxX(self.bounds) - 8 - bubbleRect.origin.x);
+            NSColor *fill = [kind isEqualToString:@"user"] ? [NSColor colorWithRed:0.91 green:0.95 blue:1 alpha:1] : [NSColor colorWithWhite:0.975 alpha:1];
+            NSColor *stroke = [kind isEqualToString:@"user"] ? [NSColor colorWithRed:0.70 green:0.82 blue:0.98 alpha:1] : [NSColor colorWithWhite:0.88 alpha:1];
+            NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(bubbleRect, 0.5, 0.5) xRadius:14 yRadius:14];
+            [fill setFill];
+            [path fill];
+            [stroke setStroke];
+            path.lineWidth = 1;
+            [path stroke];
+        }];
+    }
+    [super drawRect:dirtyRect];
+}
+@end
+
+static void ApplyAgentMessageBubble(NSMutableAttributedString *target, NSRange range, NSString *kind, NSTextAlignment alignment) {
+    if (!range.length || !kind.length) return;
+    NSUInteger location = range.location;
+    NSUInteger limit = NSMaxRange(range);
+    while (location < limit) {
+        NSRange paragraph = [target.string paragraphRangeForRange:NSMakeRange(location, 0)];
+        NSRange clipped = NSIntersectionRange(paragraph, range);
+        NSParagraphStyle *existing = [target attribute:NSParagraphStyleAttributeName atIndex:clipped.location effectiveRange:nil];
+        NSMutableParagraphStyle *style = existing ? [existing mutableCopy] : [[NSMutableParagraphStyle alloc] init];
+        style.alignment = alignment;
+        style.headIndent = alignment == NSTextAlignmentRight ? 0 : 14;
+        style.firstLineHeadIndent = style.headIndent;
+        style.tailIndent = alignment == NSTextAlignmentRight ? -14 : -180;
+        [target addAttribute:NSParagraphStyleAttributeName value:style range:clipped];
+        NSUInteger next = NSMaxRange(paragraph);
+        if (next <= location) break;
+        location = next;
+    }
+    [target addAttribute:AgentBubbleAttributeName value:kind range:range];
+}
+
+static void AppendAgentTextAligned(NSMutableAttributedString *target, NSString *text, NSFont *font, NSColor *color, CGFloat spacing, NSTextAlignment alignment) {
     NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
     paragraph.lineSpacing = 3;
     paragraph.paragraphSpacing = spacing;
+    paragraph.alignment = alignment;
     [target appendAttributedString:[[NSAttributedString alloc] initWithString:text attributes:@{
         NSFontAttributeName: font,
         NSForegroundColorAttributeName: color,
         NSParagraphStyleAttributeName: paragraph,
     }]];
+}
+
+static void AppendAgentText(NSMutableAttributedString *target, NSString *text, NSFont *font, NSColor *color, CGFloat spacing) {
+    AppendAgentTextAligned(target, text, font, color, spacing, NSTextAlignmentLeft);
 }
 
 static void AppendEvidenceLink(NSMutableAttributedString *target, NSString *label, NSString *evidenceID) {
@@ -373,6 +486,16 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 @property BOOL dashboardLoading;
 @property BOOL showingAnalyticsDashboard;
 @property NSTask *activeAgentTask;
+@property NSView *customerRootView;
+@property NSView *dashboardRootView;
+@property NSView *messageSearchRootView;
+@property NSUInteger navigationRevision;
+@property BOOL dashboardRefreshPending;
+@property BOOL messageSearchSessionsLoading;
+@property BOOL messageSearchLoading;
+@property NSTask *localAPIServiceTask;
+@property BOOL localAPIServiceStarting;
+@property NSString *localAPIServiceError;
 @property NSArray<NSDictionary *> *messageSearchSessions;
 @property NSArray<NSDictionary *> *messageSearchResults;
 @property NSComboBox *messageSessionPicker;
@@ -540,6 +663,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 }
 
 - (BOOL)startChatlogServiceForAccount:(NSString *)accountID binary:(NSString *)binary error:(NSError **)error {
+    @synchronized (self) {
     if (!accountID.length || [accountID isEqualToString:@"未连接"]) {
         if (error) *error = [NSError errorWithDomain:@"WeChatSalesAgent" code:1 userInfo:@{NSLocalizedDescriptionKey: @"请先连接并同步微信账号"}];
         return NO;
@@ -560,6 +684,143 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     self.chatlogServiceTask = task;
     self.chatlogServiceAccountID = accountID;
     return YES;
+    }
+}
+
+- (NSString *)localAPITokenWithError:(NSError **)error {
+    NSTask *task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:self.pythonExecutable];
+    task.arguments = @[@"-m", @"agent_core.local_api", @"token"];
+    task.environment = self.agentEnvironment;
+    NSPipe *pipe = [NSPipe pipe]; task.standardOutput = pipe; task.standardError = pipe;
+    if (![task launchAndReturnError:error]) return nil;
+    NSData *data = [self drainPipe:pipe whileTaskRuns:task];
+    NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+    NSString *token = [output stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (task.terminationStatus != 0 || !token.length) {
+        if (error) *error = [NSError errorWithDomain:@"WeChatSalesAgent" code:task.terminationStatus userInfo:@{NSLocalizedDescriptionKey: token.length ? token : @"无法创建本机 API 令牌"}];
+        return nil;
+    }
+    return token;
+}
+
+- (BOOL)prepareOwnedLocalAPIPort {
+    NSTask *listenerTask = [[NSTask alloc] init];
+    listenerTask.executableURL = [NSURL fileURLWithPath:@"/usr/sbin/lsof"];
+    listenerTask.arguments = @[@"-nP", @"-iTCP:8765", @"-sTCP:LISTEN", @"-t"];
+    NSPipe *listenerPipe = [NSPipe pipe]; listenerTask.standardOutput = listenerPipe; listenerTask.standardError = NSFileHandle.fileHandleWithNullDevice;
+    if (![listenerTask launchAndReturnError:nil]) return NO;
+    NSString *output = [[NSString alloc] initWithData:[self drainPipe:listenerPipe whileTaskRuns:listenerTask] encoding:NSUTF8StringEncoding] ?: @"";
+    for (NSString *line in [output componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+        pid_t pid = (pid_t)line.intValue; if (pid <= 0) continue;
+        if (self.localAPIServiceTask.running && pid == self.localAPIServiceTask.processIdentifier) continue;
+        NSTask *ps = [[NSTask alloc] init]; ps.executableURL = [NSURL fileURLWithPath:@"/bin/ps"]; ps.arguments = @[@"-p", [NSString stringWithFormat:@"%d", pid], @"-o", @"command="];
+        NSPipe *pipe = [NSPipe pipe]; ps.standardOutput = pipe; ps.standardError = NSFileHandle.fileHandleWithNullDevice;
+        if (![ps launchAndReturnError:nil]) return NO;
+        NSString *command = [[NSString alloc] initWithData:[self drainPipe:pipe whileTaskRuns:ps] encoding:NSUTF8StringEncoding] ?: @"";
+        BOOL owned = [command containsString:@"-m agent_core.local_api serve"] &&
+            [command containsString:@"--host 127.0.0.1"] &&
+            [command containsString:@"--port 8765"] &&
+            [command containsString:self.currentDBPath];
+        if (!owned) return NO;
+        kill(pid, SIGTERM);
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:2];
+        while (kill(pid, 0) == 0 && deadline.timeIntervalSinceNow > 0) [NSThread sleepForTimeInterval:0.05];
+        if (kill(pid, 0) == 0) return NO;
+    }
+    return YES;
+}
+
+- (BOOL)startLocalAPIService:(NSError **)error {
+    @synchronized (self) {
+        if (self.localAPIServiceTask.running && [self process:self.localAPIServiceTask.processIdentifier listensOnTCPPort:8765]) return YES;
+        if (self.localAPIServiceTask.running) [self.localAPIServiceTask terminate];
+        self.localAPIServiceTask = nil;
+        if (![self prepareOwnedLocalAPIPort]) {
+            if (error) *error = [NSError errorWithDomain:@"WeChatSalesAgent" code:8765 userInfo:@{NSLocalizedDescriptionKey: @"8765 端口被其他程序占用"}];
+            return NO;
+        }
+        if (![self localAPITokenWithError:error].length) return NO;
+        NSTask *task = [[NSTask alloc] init];
+        task.executableURL = [NSURL fileURLWithPath:self.pythonExecutable];
+        task.arguments = @[@"-m", @"agent_core.local_api", @"serve", @"--host", @"127.0.0.1", @"--port", @"8765", @"--db", self.currentDBPath, @"--chatlog-addr", @"127.0.0.1:5030"];
+        task.environment = self.agentEnvironment;
+        task.standardOutput = NSFileHandle.fileHandleWithNullDevice;
+        task.standardError = NSFileHandle.fileHandleWithNullDevice;
+        if (![task launchAndReturnError:error]) return NO;
+        self.localAPIServiceTask = task;
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:3];
+        while (task.running && deadline.timeIntervalSinceNow > 0) {
+            if ([self process:task.processIdentifier listensOnTCPPort:8765]) return YES;
+            [NSThread sleepForTimeInterval:0.1];
+        }
+        if (task.running) [task terminate];
+        self.localAPIServiceTask = nil;
+        if (error) *error = [NSError errorWithDomain:@"WeChatSalesAgent" code:8765 userInfo:@{NSLocalizedDescriptionKey: @"本机 API 启动失败，请检查 8765 端口是否被占用"}];
+        return NO;
+    }
+}
+
+- (void)startIntegrationServices {
+    if (self.localAPIServiceStarting) return;
+    self.localAPIServiceStarting = YES;
+    NSString *accountID = self.snapshot[@"account_id"] ?: @"";
+    NSString *binary = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Chatlog/chatlog-darwin-arm64"];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSError *serviceError = nil;
+        BOOL chatlogReady = [self startChatlogServiceForAccount:accountID binary:binary error:&serviceError];
+        BOOL apiReady = chatlogReady && [self startLocalAPIService:&serviceError];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.localAPIServiceStarting = NO;
+            self.localAPIServiceError = apiReady ? nil : (serviceError.localizedDescription ?: @"本机 API 启动失败");
+        });
+    });
+}
+
+- (void)showLocalAPIAccess:(id)sender {
+    (void)sender;
+    self.statusLabel.stringValue = @"正在准备本机 API…";
+    self.statusLabel.textColor = NSColor.systemOrangeColor;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSError *error = nil;
+        NSString *accountID = self.snapshot[@"account_id"] ?: @"";
+        NSString *binary = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Chatlog/chatlog-darwin-arm64"];
+        BOOL ready = [self startChatlogServiceForAccount:accountID binary:binary error:&error] && [self startLocalAPIService:&error];
+        NSString *token = ready ? [self localAPITokenWithError:&error] : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!ready || !token.length) {
+                self.statusLabel.stringValue = error.localizedDescription ?: @"本机 API 启动失败";
+                self.statusLabel.textColor = NSColor.systemRedColor;
+                return;
+            }
+            NSString *connectorPath = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Integrations/WorkBuddy"];
+            NSString *pythonPath = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"PythonRuntime/bin/python3"];
+            NSString *pythonHome = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"PythonRuntime"];
+            NSString *pythonModulePath = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Python"];
+            NSString *mcpConfig = [NSString stringWithFormat:@"{\n  \"mcpServers\": {\n    \"wechat-customer-analysis\": {\n      \"type\": \"stdio\",\n      \"command\": \"%@\",\n      \"args\": [\"-m\", \"agent_core.local_mcp\"],\n      \"env\": {\n        \"PYTHONHOME\": \"%@\",\n        \"PYTHONPATH\": \"%@\"\n      },\n      \"timeout\": 30000\n    }\n  }\n}", pythonPath, pythonHome, pythonModulePath];
+            NSString *details = [NSString stringWithFormat:@"MCP（WorkBuddy / 本机 Agent）\n%@\n\nWorkBuddy 连接器\n%@\n\nREST API\nhttp://127.0.0.1:8765\n\nOpenAPI\nhttp://127.0.0.1:8765/openapi.json\n\nBearer token\n%@\n\nREST 调用示例\ncurl -H 'Authorization: Bearer %@' http://127.0.0.1:8765/v1/status", mcpConfig, connectorPath, token, token];
+            NSAlert *alert = [[NSAlert alloc] init];
+            alert.messageText = @"Agent 接入已就绪";
+            alert.informativeText = @"WorkBuddy 通过本机 MCP 自动发现工具；其他本机 Agent 也可使用 MCP 或 OpenAPI。凭据保存在 macOS 钥匙串。";
+            NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 680, 340)];
+            scroll.hasVerticalScroller = YES; scroll.borderType = NSBezelBorder;
+            NSTextView *view = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 680, 340)];
+            view.editable = NO; view.selectable = YES; view.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular]; view.string = details; view.textContainerInset = NSMakeSize(12, 12);
+            scroll.documentView = view; alert.accessoryView = scroll;
+            [alert addButtonWithTitle:@"复制接入信息"];
+            [alert addButtonWithTitle:@"打开 WorkBuddy 连接器"];
+            [alert addButtonWithTitle:@"关闭"];
+            NSModalResponse response = [alert runModal];
+            if (response == NSAlertFirstButtonReturn) {
+                [NSPasteboard.generalPasteboard clearContents];
+                [NSPasteboard.generalPasteboard setString:details forType:NSPasteboardTypeString];
+            } else if (response == NSAlertSecondButtonReturn) {
+                [NSWorkspace.sharedWorkspace selectFile:connectorPath inFileViewerRootedAtPath:connectorPath.stringByDeletingLastPathComponent];
+            }
+            self.statusLabel.stringValue = @"MCP 与本机 API 已就绪";
+            self.statusLabel.textColor = NSColor.systemGreenColor;
+        });
+    });
 }
 
 - (BOOL)isSIPDisabled {
@@ -611,7 +872,10 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     }
     self.showingMessageSearch = NO;
     self.showingAnalyticsDashboard = NO;
-    [self rebuildWorkspaceWithMessage:@"已返回智能分析" color:NSColor.systemGreenColor];
+    self.window.title = @"微信客户分析 Agent";
+    if (self.customerRootView) self.window.contentView = self.customerRootView;
+    self.statusLabel.stringValue = @"已返回智能分析";
+    self.statusLabel.textColor = NSColor.systemGreenColor;
 }
 
 - (void)renderDashboardGroupCards {
@@ -680,21 +944,31 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 
 - (void)loadAnalyticsDashboard:(id)sender {
     (void)sender;
-    if (self.dashboardLoading) return;
+    if (self.dashboardLoading) { self.dashboardRefreshPending = YES; return; }
     self.dashboardLoading = YES;
-    self.dashboardStatus.stringValue = @"正在读取本机聊天统计…";
+    self.dashboardStatus.stringValue = self.dashboardGroups.count ? @"已显示当前数据 · 正在后台更新…" : @"正在读取本机聊天统计…";
     self.dashboardStatus.textColor = NSColor.systemOrangeColor;
     NSString *range = self.dashboardRangePicker.selectedItem.representedObject ?: @"today";
     NSString *privateChat = self.dashboardPrivatePicker.selectedItem.representedObject ?: @"";
     NSString *groupChat = self.dashboardGroupPicker.selectedItem.representedObject ?: @"";
+    NSString *accountID = self.snapshot[@"account_id"] ?: @"";
+    NSTask *ownedService = self.chatlogServiceTask;
+    NSUInteger navigationRevision = self.navigationRevision;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         int status = 0; NSError *error = nil;
-        NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.dashboard_cli", @"--time-range", range, @"--private-chat", privateChat, @"--group-chat", groupChat] terminationStatus:&status error:&error];
+        NSArray<NSString *> *lines = [self runBackgroundAgentCommand:@[@"-m", @"agent_core.dashboard_cli", @"--time-range", range, @"--private-chat", privateChat, @"--group-chat", groupChat] terminationStatus:&status error:&error];
         NSDictionary *object = [self lastJSONObjectFromLines:lines];
         dispatch_async(dispatch_get_main_queue(), ^{
             self.dashboardLoading = NO;
-            if (!self.showingAnalyticsDashboard) return;
-            [self applyAnalyticsDashboardObject:object status:status error:error privateChat:privateChat groupChat:groupChat];
+            BOOL current = navigationRevision == self.navigationRevision &&
+                [accountID isEqualToString:(self.snapshot[@"account_id"] ?: @"")] &&
+                ownedService == self.chatlogServiceTask &&
+                [accountID isEqualToString:self.chatlogServiceAccountID ?: @""];
+            if (current) [self applyAnalyticsDashboardObject:object status:status error:error privateChat:privateChat groupChat:groupChat];
+            if (current && self.dashboardRefreshPending) {
+                self.dashboardRefreshPending = NO;
+                [self loadAnalyticsDashboard:nil];
+            }
         });
     });
 }
@@ -718,6 +992,10 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 - (void)showAnalyticsDashboardView {
     self.showingMessageSearch = NO; self.showingAnalyticsDashboard = YES;
     self.window.title = @"聊天数据仪表盘";
+    if (self.dashboardRootView) {
+        self.window.contentView = self.dashboardRootView;
+        return;
+    }
     NSView *root = [[NSView alloc] initWithFrame:self.window.contentView.bounds]; root.wantsLayer = YES; root.layer.backgroundColor = NSColor.whiteColor.CGColor;
     NSView *sidebar = [[NSView alloc] initWithFrame:NSZeroRect]; sidebar.wantsLayer = YES; sidebar.layer.backgroundColor = [NSColor colorWithWhite:0.965 alpha:1].CGColor;
     NSTextField *brand = Label(@"客户研究", 19, [NSColor colorWithWhite:0.12 alpha:1], YES); NSTextField *tagline = Label(@"DeepSeek Agent", 11, [NSColor colorWithWhite:0.45 alpha:1], NO);
@@ -768,50 +1046,80 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     NSTextField *databaseTitle = Label(@"当前可查询数据库", 18, [NSColor colorWithWhite:0.14 alpha:1], YES); databaseTitle.frame = NSMakeRect(x, 1666, 260, 26); [content addSubview:databaseTitle];
     self.dashboardDatabaseTable = [[NSTableView alloc] initWithFrame:NSZeroRect]; self.dashboardDatabaseTable.dataSource = self; self.dashboardDatabaseTable.delegate = self; self.dashboardDatabaseTable.rowHeight = 27; self.dashboardDatabaseTable.usesAlternatingRowBackgroundColors = YES; for (NSArray *spec in @[@[@"类型", @"kind", @120], @[@"本机数据库路径", @"path", @820]]) { NSTableColumn *column = [[NSTableColumn alloc] initWithIdentifier:spec[1]]; column.title = spec[0]; column.width = [spec[2] doubleValue]; [self.dashboardDatabaseTable addTableColumn:column]; } NSScrollView *databaseScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(x, 1698, contentWidth, 125)]; databaseScroll.documentView = self.dashboardDatabaseTable; databaseScroll.hasVerticalScroller = YES; databaseScroll.drawsBackground = YES; [content addSubview:databaseScroll];
     PolishWorkspace(root);
+    self.dashboardRootView = root;
     self.window.contentView = root;
-    [self loadAnalyticsDashboard:nil];
 }
 
 - (void)openAnalyticsDashboard:(id)sender {
     (void)sender;
     NSString *accountID = self.snapshot[@"account_id"] ?: @"";
-    if (self.chatlogServiceTask.running && [self.chatlogServiceAccountID isEqualToString:accountID] && [self process:self.chatlogServiceTask.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:accountID]) { [self showAnalyticsDashboardView]; return; }
+    [self showAnalyticsDashboardView];
     if (self.dashboardOpening) return;
     NSString *binary = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Chatlog/chatlog-darwin-arm64"];
-    if (![[NSFileManager defaultManager] isExecutableFileAtPath:binary]) { self.statusLabel.stringValue = @"本地微信数据组件缺失"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:binary]) { self.dashboardStatus.stringValue = @"本地微信数据组件缺失"; self.dashboardStatus.textColor = NSColor.systemRedColor; return; }
     NSError *launchError = nil;
-    if (![self startChatlogServiceForAccount:accountID binary:binary error:&launchError]) { self.statusLabel.stringValue = launchError.localizedDescription ?: @"仪表盘服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
-    self.dashboardOpening = YES; self.statusLabel.stringValue = @"正在启动聊天数据仪表盘…"; self.statusLabel.textColor = NSColor.systemOrangeColor; NSTask *ownedService = self.chatlogServiceTask;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ while (ownedService.running) { if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:accountID]) { dispatch_async(dispatch_get_main_queue(), ^{ if (self.chatlogServiceTask != ownedService || !self.dashboardOpening) return; self.dashboardOpening = NO; [self showAnalyticsDashboardView]; }); return; } [NSThread sleepForTimeInterval:0.25]; } dispatch_async(dispatch_get_main_queue(), ^{ if (!self.dashboardOpening) return; self.dashboardOpening = NO; self.statusLabel.stringValue = @"仪表盘服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; }); });
+    if (![self startChatlogServiceForAccount:accountID binary:binary error:&launchError]) { self.dashboardStatus.stringValue = launchError.localizedDescription ?: @"仪表盘服务启动失败"; self.dashboardStatus.textColor = NSColor.systemRedColor; return; }
+    self.dashboardOpening = YES;
+    self.dashboardStatus.stringValue = self.dashboardGroups.count ? @"已显示当前数据 · 正在同步最新消息…" : @"正在启动聊天数据仪表盘…";
+    self.dashboardStatus.textColor = NSColor.systemOrangeColor;
+    NSTask *ownedService = self.chatlogServiceTask;
+    NSUInteger navigationRevision = self.navigationRevision;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ while (ownedService.running) { if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:accountID]) { dispatch_async(dispatch_get_main_queue(), ^{ if (navigationRevision != self.navigationRevision || self.chatlogServiceTask != ownedService || !self.dashboardOpening || ![accountID isEqualToString:(self.snapshot[@"account_id"] ?: @"")]) return; self.dashboardOpening = NO; [self loadAnalyticsDashboard:nil]; }); return; } [NSThread sleepForTimeInterval:0.25]; } dispatch_async(dispatch_get_main_queue(), ^{ if (navigationRevision != self.navigationRevision || !self.dashboardOpening) return; self.dashboardOpening = NO; self.dashboardStatus.stringValue = @"仪表盘服务启动失败"; self.dashboardStatus.textColor = NSColor.systemRedColor; }); });
 }
 
 - (void)loadMessageSearchSessions {
-    int status = 0;
-    NSError *error = nil;
-    NSArray<NSString *> *lines = [self runAgentCommand:@[@"-m", @"agent_core.message_search_cli", @"sessions", @"--limit", @"5000"] terminationStatus:&status error:&error];
-    NSDictionary *object = [self lastJSONObjectFromLines:lines];
-    NSArray *sessions = object[@"sessions"];
-    if (status != 0 || ![sessions isKindOfClass:NSArray.class]) {
-        self.messageSearchStatus.stringValue = [self messageFromEvent:object defaultMessage:(error.localizedDescription ?: @"无法读取微信会话")];
-        self.messageSearchStatus.textColor = NSColor.systemRedColor;
-        return;
-    }
-    self.messageSearchSessions = sessions;
-    [self.messageSessionPicker removeAllItems];
-    for (NSDictionary *session in sessions) {
-        NSString *name = session[@"display_name"] ?: session[@"username"] ?: @"未命名会话";
-        NSString *prefix = [session[@"is_group"] boolValue] ? @"群聊 · " : @"私聊 · ";
-        [self.messageSessionPicker addItemWithObjectValue:[NSString stringWithFormat:@"%@ · %@%@", name, prefix, session[@"username"]]];
-    }
-    if (sessions.count) [self.messageSessionPicker selectItemAtIndex:0];
-    self.messageSearchStatus.stringValue = [NSString stringWithFormat:@"已加载 %lu 个会话", (unsigned long)sessions.count];
-    self.messageSearchStatus.textColor = NSColor.systemGreenColor;
+    if (self.messageSearchSessionsLoading) return;
+    self.messageSearchSessionsLoading = YES;
+    NSInteger selectedIndex = self.messageSessionPicker.indexOfSelectedItem;
+    NSString *selectedUsername = selectedIndex >= 0 && selectedIndex < (NSInteger)self.messageSearchSessions.count ? self.messageSearchSessions[selectedIndex][@"username"] : @"";
+    self.messageSearchStatus.stringValue = self.messageSearchSessions.count ? @"已显示当前会话 · 正在后台更新…" : @"正在读取会话…";
+    self.messageSearchStatus.textColor = NSColor.systemOrangeColor;
+    NSString *accountID = self.snapshot[@"account_id"] ?: @"";
+    NSTask *ownedService = self.chatlogServiceTask;
+    NSUInteger navigationRevision = self.navigationRevision;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        int status = 0;
+        NSError *error = nil;
+        NSArray<NSString *> *lines = [self runBackgroundAgentCommand:@[@"-m", @"agent_core.message_search_cli", @"sessions", @"--limit", @"5000"] terminationStatus:&status error:&error];
+        NSDictionary *object = [self lastJSONObjectFromLines:lines];
+        NSArray *sessions = object[@"sessions"];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.messageSearchSessionsLoading = NO;
+            BOOL current = navigationRevision == self.navigationRevision &&
+                [accountID isEqualToString:(self.snapshot[@"account_id"] ?: @"")] &&
+                ownedService == self.chatlogServiceTask &&
+                [accountID isEqualToString:self.chatlogServiceAccountID ?: @""];
+            if (!current) return;
+            if (status != 0 || ![sessions isKindOfClass:NSArray.class]) {
+                self.messageSearchStatus.stringValue = [self messageFromEvent:object defaultMessage:(error.localizedDescription ?: @"无法读取微信会话")];
+                self.messageSearchStatus.textColor = NSColor.systemRedColor;
+                return;
+            }
+            self.messageSearchSessions = sessions;
+            [self.messageSessionPicker removeAllItems];
+            NSInteger restoredIndex = NSNotFound;
+            for (NSUInteger index = 0; index < sessions.count; index += 1) {
+                NSDictionary *session = sessions[index];
+                NSString *name = session[@"display_name"] ?: session[@"username"] ?: @"未命名会话";
+                NSString *prefix = [session[@"is_group"] boolValue] ? @"群聊 · " : @"私聊 · ";
+                [self.messageSessionPicker addItemWithObjectValue:[NSString stringWithFormat:@"%@ · %@%@", name, prefix, session[@"username"]]];
+                if ([session[@"username"] isEqualToString:selectedUsername]) restoredIndex = (NSInteger)index;
+            }
+            if (sessions.count) [self.messageSessionPicker selectItemAtIndex:restoredIndex == NSNotFound ? 0 : restoredIndex];
+            self.messageSearchStatus.stringValue = [NSString stringWithFormat:@"已同步 %lu 个会话", (unsigned long)sessions.count];
+            self.messageSearchStatus.textColor = NSColor.systemGreenColor;
+        });
+    });
 }
 
 - (void)showMessageSearchView {
     self.showingMessageSearch = YES;
-    self.messageSearchResults = @[];
+    self.showingAnalyticsDashboard = NO;
     self.window.title = @"微信消息检索";
+    if (self.messageSearchRootView) {
+        self.window.contentView = self.messageSearchRootView;
+        return;
+    }
     NSView *root = [[NSView alloc] initWithFrame:self.window.contentView.bounds];
     root.wantsLayer = YES;
     root.layer.backgroundColor = NSColor.whiteColor.CGColor;
@@ -888,8 +1196,8 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         [detailScroll.leadingAnchor constraintEqualToAnchor:tableScroll.trailingAnchor constant:12], [detailScroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-28], [detailScroll.topAnchor constraintEqualToAnchor:tableScroll.topAnchor], [detailScroll.bottomAnchor constraintEqualToAnchor:tableScroll.bottomAnchor]
     ]];
     PolishWorkspace(root);
+    self.messageSearchRootView = root;
     self.window.contentView = root;
-    [self loadMessageSearchSessions];
 }
 
 - (void)runMessageSearch:(id)sender {
@@ -908,23 +1216,38 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     NSDictionary *session = self.messageSearchSessions[index];
     NSInteger typeIndex = self.messageTypePicker.indexOfSelectedItem;
     NSArray<NSString *> *arguments = @[@"-m", @"agent_core.message_search_cli", @"search", @"--chat", session[@"username"] ?: @"", @"--since", [NSString stringWithFormat:@"%lld", (long long)self.messageStartDate.dateValue.timeIntervalSince1970], @"--until", [NSString stringWithFormat:@"%lld", (long long)self.messageEndDate.dateValue.timeIntervalSince1970], @"--keyword", self.messageKeyword.stringValue ?: @"", @"--msg-type", types[typeIndex], @"--sub-type", subTypes[typeIndex], @"--direction", directions[self.messageDirectionPicker.indexOfSelectedItem], @"--limit", [NSString stringWithFormat:@"%ld", (long)limit]];
-    self.messageSearchStatus.stringValue = @"正在查询本机消息…";
+    if (self.messageSearchLoading) return;
+    self.messageSearchLoading = YES;
+    self.messageSearchStatus.stringValue = self.messageSearchResults.count ? @"已显示当前结果 · 正在后台更新…" : @"正在查询本机消息…";
     self.messageSearchStatus.textColor = NSColor.systemOrangeColor;
-    int status = 0;
-    NSError *error = nil;
-    NSArray<NSString *> *lines = [self runAgentCommand:arguments terminationStatus:&status error:&error];
-    NSDictionary *object = [self lastJSONObjectFromLines:lines];
-    NSArray *messages = object[@"messages"];
-    if (status != 0 || ![messages isKindOfClass:NSArray.class]) {
-        self.messageSearchStatus.stringValue = [self messageFromEvent:object defaultMessage:(error.localizedDescription ?: @"消息查询失败")];
-        self.messageSearchStatus.textColor = NSColor.systemRedColor;
-        return;
-    }
-    self.messageSearchResults = messages;
-    [self.messageTable reloadData];
-    self.messageSearchStatus.stringValue = [NSString stringWithFormat:@"匹配 %@ 条 · 显示 %lu 条", object[@"matched_total"] ?: @0, (unsigned long)messages.count];
-    self.messageSearchStatus.textColor = NSColor.systemGreenColor;
-    if (messages.count) { [self.messageTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO]; [self showMessageResult:messages[0]]; }
+    NSString *accountID = self.snapshot[@"account_id"] ?: @"";
+    NSTask *ownedService = self.chatlogServiceTask;
+    NSUInteger navigationRevision = self.navigationRevision;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        int status = 0;
+        NSError *error = nil;
+        NSArray<NSString *> *lines = [self runBackgroundAgentCommand:arguments terminationStatus:&status error:&error];
+        NSDictionary *object = [self lastJSONObjectFromLines:lines];
+        NSArray *messages = object[@"messages"];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.messageSearchLoading = NO;
+            BOOL current = navigationRevision == self.navigationRevision &&
+                [accountID isEqualToString:(self.snapshot[@"account_id"] ?: @"")] &&
+                ownedService == self.chatlogServiceTask &&
+                [accountID isEqualToString:self.chatlogServiceAccountID ?: @""];
+            if (!current) return;
+            if (status != 0 || ![messages isKindOfClass:NSArray.class]) {
+                self.messageSearchStatus.stringValue = [self messageFromEvent:object defaultMessage:(error.localizedDescription ?: @"消息查询失败")];
+                self.messageSearchStatus.textColor = NSColor.systemRedColor;
+                return;
+            }
+            self.messageSearchResults = messages;
+            [self.messageTable reloadData];
+            self.messageSearchStatus.stringValue = [NSString stringWithFormat:@"匹配 %@ 条 · 显示 %lu 条", object[@"matched_total"] ?: @0, (unsigned long)messages.count];
+            self.messageSearchStatus.textColor = NSColor.systemGreenColor;
+            if (messages.count) { [self.messageTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO]; [self showMessageResult:messages[0]]; }
+        });
+    });
 }
 
 - (void)showMessageResult:(NSDictionary *)message {
@@ -934,25 +1257,26 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 - (void)openMessageSearch:(id)sender {
     (void)sender;
     NSString *accountID = self.snapshot[@"account_id"] ?: @"";
-    if (self.chatlogServiceTask.running && [self.chatlogServiceAccountID isEqualToString:accountID] && [self process:self.chatlogServiceTask.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:accountID]) { [self showMessageSearchView]; return; }
-    if (self.messageSearchOpening) { self.statusLabel.stringValue = @"正在启动消息检索…"; self.statusLabel.textColor = NSColor.systemOrangeColor; return; }
+    [self showMessageSearchView];
+    if (self.messageSearchOpening) return;
     NSString *chatlogBinary = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Chatlog/chatlog-darwin-arm64"];
-    if (![[NSFileManager defaultManager] isExecutableFileAtPath:chatlogBinary]) { self.statusLabel.stringValue = @"本地微信数据组件缺失"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:chatlogBinary]) { self.messageSearchStatus.stringValue = @"本地微信数据组件缺失"; self.messageSearchStatus.textColor = NSColor.systemRedColor; return; }
     NSError *launchError = nil;
-    if (![self startChatlogServiceForAccount:accountID binary:chatlogBinary error:&launchError]) { self.statusLabel.stringValue = launchError.localizedDescription ?: @"消息检索服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; return; }
+    if (![self startChatlogServiceForAccount:accountID binary:chatlogBinary error:&launchError]) { self.messageSearchStatus.stringValue = launchError.localizedDescription ?: @"消息检索服务启动失败"; self.messageSearchStatus.textColor = NSColor.systemRedColor; return; }
     self.messageSearchOpening = YES;
-    self.statusLabel.stringValue = @"正在启动消息检索…";
-    self.statusLabel.textColor = NSColor.systemOrangeColor;
+    self.messageSearchStatus.stringValue = self.messageSearchSessions.count ? @"已显示当前数据 · 正在同步最新会话…" : @"正在启动消息检索…";
+    self.messageSearchStatus.textColor = NSColor.systemOrangeColor;
     NSTask *ownedService = self.chatlogServiceTask;
+    NSUInteger navigationRevision = self.navigationRevision;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         while (ownedService.running) {
             if ([self process:ownedService.processIdentifier listensOnTCPPort:5030] && [self chatlogReadAPIIsReadyForAccount:accountID]) {
-                dispatch_async(dispatch_get_main_queue(), ^{ if (self.chatlogServiceTask != ownedService || !self.messageSearchOpening) return; self.messageSearchOpening = NO; [self showMessageSearchView]; });
+                dispatch_async(dispatch_get_main_queue(), ^{ if (navigationRevision != self.navigationRevision || self.chatlogServiceTask != ownedService || !self.messageSearchOpening || ![accountID isEqualToString:(self.snapshot[@"account_id"] ?: @"")]) return; self.messageSearchOpening = NO; [self loadMessageSearchSessions]; });
                 return;
             }
             [NSThread sleepForTimeInterval:0.25];
         }
-        dispatch_async(dispatch_get_main_queue(), ^{ if (self.chatlogServiceTask != ownedService || !self.messageSearchOpening) return; self.messageSearchOpening = NO; self.statusLabel.stringValue = @"消息检索服务启动失败"; self.statusLabel.textColor = NSColor.systemRedColor; });
+        dispatch_async(dispatch_get_main_queue(), ^{ if (navigationRevision != self.navigationRevision || self.chatlogServiceTask != ownedService || !self.messageSearchOpening) return; self.messageSearchOpening = NO; self.messageSearchStatus.stringValue = @"消息检索服务启动失败"; self.messageSearchStatus.textColor = NSColor.systemRedColor; });
     });
 }
 
@@ -1004,6 +1328,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     if (self.didInitializeWorkspace) return;
     self.didInitializeWorkspace = YES;
+    InstallMainMenu();
     NSError *error = nil;
     self.snapshot = self.snapshotPath.length ? [self loadSnapshotAtPath:self.snapshotPath error:&error] : [self loadCurrentSnapshot:&error];
     if (!self.snapshot) {
@@ -1017,6 +1342,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     [self buildWindow];
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
+    [self startIntegrationServices];
 }
 
 - (NSString *)storedAgentModel {
@@ -1060,6 +1386,19 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 }
 
 - (void)buildWindow {
+    self.navigationRevision += 1;
+    self.customerRootView = nil;
+    self.dashboardRootView = nil;
+    self.messageSearchRootView = nil;
+    self.messageSearchSessions = @[];
+    self.messageSearchResults = @[];
+    self.dashboardGroups = @[];
+    self.dashboardSpeakers = @[];
+    self.dashboardDatabases = @[];
+    self.dashboardLoading = NO;
+    self.dashboardRefreshPending = NO;
+    self.messageSearchSessionsLoading = NO;
+    self.messageSearchLoading = NO;
     self.showingMessageSearch = NO;
     self.showingAnalyticsDashboard = NO;
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1360, 820)
@@ -1165,21 +1504,23 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     self.savedAnalysisPicker.action = @selector(loadSelectedAnalysis:);
     NSButton *refreshButton = [NSButton buttonWithTitle:@"检查更新" target:self action:@selector(refreshSelectedAnalysis:)];
     NSButton *deleteButton = [NSButton buttonWithTitle:@"删除" target:self action:@selector(deleteSelectedAnalysis:)];
+    NSButton *apiButton = [NSButton buttonWithTitle:@"Agent 接入" target:self action:@selector(showLocalAPIAccess:)];
     NSButton *exportButton = [NSButton buttonWithTitle:@"导出报告" target:self action:@selector(exportWorkbook:)];
     exportButton.bezelStyle = NSBezelStyleTexturedRounded;
     exportButton.contentTintColor = NSColor.systemBlueColor;
-    [content addSubview:newButton]; [content addSubview:saveButton]; [content addSubview:self.savedAnalysisPicker]; [content addSubview:refreshButton]; [content addSubview:deleteButton];
+    [content addSubview:newButton]; [content addSubview:saveButton]; [content addSubview:self.savedAnalysisPicker]; [content addSubview:refreshButton]; [content addSubview:deleteButton]; [content addSubview:apiButton];
     [content addSubview:self.agentActivityIndicator]; [content addSubview:self.statusLabel]; [content addSubview:exportButton];
-    for (NSView *view in @[newButton, saveButton, self.savedAnalysisPicker, refreshButton, deleteButton, self.agentActivityIndicator, self.statusLabel, exportButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
+    for (NSView *view in @[newButton, saveButton, self.savedAnalysisPicker, refreshButton, deleteButton, apiButton, self.agentActivityIndicator, self.statusLabel, exportButton]) view.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
         [newButton.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:28], [newButton.centerYAnchor constraintEqualToAnchor:exportButton.centerYAnchor],
         [saveButton.leadingAnchor constraintEqualToAnchor:newButton.trailingAnchor constant:8], [saveButton.centerYAnchor constraintEqualToAnchor:newButton.centerYAnchor],
         [self.savedAnalysisPicker.leadingAnchor constraintEqualToAnchor:saveButton.trailingAnchor constant:8], [self.savedAnalysisPicker.centerYAnchor constraintEqualToAnchor:newButton.centerYAnchor], [self.savedAnalysisPicker.widthAnchor constraintEqualToConstant:150],
         [refreshButton.leadingAnchor constraintEqualToAnchor:self.savedAnalysisPicker.trailingAnchor constant:8], [refreshButton.centerYAnchor constraintEqualToAnchor:newButton.centerYAnchor],
         [deleteButton.leadingAnchor constraintEqualToAnchor:refreshButton.trailingAnchor constant:6], [deleteButton.centerYAnchor constraintEqualToAnchor:newButton.centerYAnchor],
+        [apiButton.leadingAnchor constraintEqualToAnchor:deleteButton.trailingAnchor constant:6], [apiButton.centerYAnchor constraintEqualToAnchor:newButton.centerYAnchor],
         [exportButton.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-28], [exportButton.topAnchor constraintEqualToAnchor:content.topAnchor constant:22],
         [self.statusLabel.trailingAnchor constraintEqualToAnchor:exportButton.leadingAnchor constant:-18], [self.statusLabel.centerYAnchor constraintEqualToAnchor:exportButton.centerYAnchor],
-        [self.statusLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:deleteButton.trailingAnchor constant:12],
+        [self.statusLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:apiButton.trailingAnchor constant:12],
         [self.statusLabel.widthAnchor constraintLessThanOrEqualToConstant:360],
         [self.agentActivityIndicator.trailingAnchor constraintEqualToAnchor:self.statusLabel.leadingAnchor constant:-8], [self.agentActivityIndicator.centerYAnchor constraintEqualToAnchor:self.statusLabel.centerYAnchor],
         [self.agentActivityIndicator.widthAnchor constraintEqualToConstant:14], [self.agentActivityIndicator.heightAnchor constraintEqualToConstant:14]
@@ -1196,14 +1537,15 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         [taskSurface.topAnchor constraintEqualToAnchor:content.topAnchor constant:58], [taskSurface.bottomAnchor constraintEqualToAnchor:content.bottomAnchor]
     ]];
 
-    self.agentTranscript = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 760, 440)];
+    self.agentTranscript = [[AgentTranscriptView alloc] initWithFrame:NSMakeRect(0, 0, 760, 440)];
     self.agentTranscript.editable = NO; self.agentTranscript.selectable = YES; self.agentTranscript.verticallyResizable = YES; self.agentTranscript.delegate = self;
     self.agentTranscript.linkTextAttributes = @{NSForegroundColorAttributeName: NSColor.systemBlueColor, NSUnderlineStyleAttributeName: @(NSUnderlineStyleNone)};
+    self.agentTranscript.horizontallyResizable = NO; self.agentTranscript.autoresizingMask = NSViewWidthSizable;
     self.agentTranscript.textContainer.widthTracksTextView = YES; self.agentTranscript.font = [NSFont systemFontOfSize:14];
     self.agentTranscript.drawsBackground = NO; self.agentTranscript.textColor = [NSColor colorWithWhite:0.14 alpha:1];
     self.agentTranscript.textContainerInset = NSMakeSize(24, 22);
     self.agentTranscript.string = @"";
-    NSScrollView *agentTranscriptScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
+    NSScrollView *agentTranscriptScroll = [[AgentTranscriptScrollView alloc] initWithFrame:NSZeroRect];
     agentTranscriptScroll.documentView = self.agentTranscript; agentTranscriptScroll.hasVerticalScroller = NO; agentTranscriptScroll.hasHorizontalScroller = NO;
     agentTranscriptScroll.autohidesScrollers = YES; agentTranscriptScroll.scrollerStyle = NSScrollerStyleOverlay;
     agentTranscriptScroll.drawsBackground = NO; agentTranscriptScroll.borderType = NSNoBorder;
@@ -1257,6 +1599,7 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         [self.agentModelPicker.leadingAnchor constraintEqualToAnchor:self.analysisModePicker.trailingAnchor constant:8], [self.agentModelPicker.centerYAnchor constraintEqualToAnchor:connectionButton.centerYAnchor], [self.agentModelPicker.widthAnchor constraintEqualToConstant:190],
         [connectionButton.leadingAnchor constraintEqualToAnchor:self.agentModelPicker.trailingAnchor constant:12], [connectionButton.topAnchor constraintEqualToAnchor:agentInputScroll.bottomAnchor constant:10]
     ]];
+    self.customerRootView = root;
     [self setAgentTranscriptContent:[[NSAttributedString alloc] initWithString:@""]];
     [self reloadSavedAnalyses];
 }
@@ -1410,8 +1753,10 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 
 - (NSAttributedString *)agentProgressTranscriptForQuestion:(NSString *)question progress:(NSDictionary<NSString *, NSString *> *)progress activeStage:(NSString *)activeStage {
     NSMutableAttributedString *content = [self agentTranscriptWithHistory];
-    AppendAgentText(content, @"你\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.secondaryLabelColor, 3);
-    AppendAgentText(content, [NSString stringWithFormat:@"%@\n", question], [NSFont systemFontOfSize:15], [NSColor colorWithWhite:0.10 alpha:1], 20);
+    NSUInteger userStart = content.length;
+    AppendAgentTextAligned(content, [NSString stringWithFormat:@"%@\n", question], [NSFont systemFontOfSize:15], [NSColor colorWithWhite:0.10 alpha:1], 34, NSTextAlignmentRight);
+    ApplyAgentMessageBubble(content, NSMakeRange(userStart, content.length - userStart), @"user", NSTextAlignmentRight);
+    NSUInteger agentStart = content.length;
     AppendAgentText(content, @"✦  Agent\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], [NSColor colorWithRed:0.15 green:0.38 blue:0.82 alpha:1], 3);
     AppendAgentText(content, @"正在处理这项任务\n", [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], [NSColor colorWithWhite:0.12 alpha:1], 14);
 
@@ -1430,14 +1775,17 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         NSFont *font = active ? [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold] : [NSFont systemFontOfSize:13 weight:NSFontWeightRegular];
         AppendAgentText(content, [NSString stringWithFormat:@"%@  %@\n", marker, detail], font, color, index + 1 == stages.count ? 0 : 8);
     }
+    ApplyAgentMessageBubble(content, NSMakeRange(agentStart, content.length - agentStart), @"agent", NSTextAlignmentLeft);
     return content;
 }
 
 - (NSAttributedString *)agentCompletedTranscriptForQuestion:(NSString *)question trace:(NSArray<NSString *> *)trace reply:(NSString *)reply summary:(NSString *)summary resultTitle:(NSString *)resultTitle resultCount:(NSUInteger)resultCount {
     (void)summary;
     NSMutableAttributedString *content = [self agentTranscriptWithHistory];
-    AppendAgentText(content, @"你\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.secondaryLabelColor, 3);
-    AppendAgentText(content, [NSString stringWithFormat:@"%@\n", question], [NSFont systemFontOfSize:15], [NSColor colorWithWhite:0.10 alpha:1], 20);
+    NSUInteger userStart = content.length;
+    AppendAgentTextAligned(content, [NSString stringWithFormat:@"%@\n", question], [NSFont systemFontOfSize:15], [NSColor colorWithWhite:0.10 alpha:1], 34, NSTextAlignmentRight);
+    ApplyAgentMessageBubble(content, NSMakeRange(userStart, content.length - userStart), @"user", NSTextAlignmentRight);
+    NSUInteger agentStart = content.length;
     AppendAgentText(content, @"✦  Agent\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], [NSColor colorWithRed:0.15 green:0.38 blue:0.82 alpha:1], 3);
     AppendAgentText(content, @"执行完成\n", [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], [NSColor colorWithWhite:0.12 alpha:1], 14);
     for (NSString *item in trace) {
@@ -1494,13 +1842,16 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
         AppendAgentText(content, @"\n可以继续问\n", [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.secondaryLabelColor, 4);
         for (NSUInteger index = 0; index < MIN(followups.count, 4); index += 1) AppendAgentText(content, [NSString stringWithFormat:@"%lu. %@\n", (unsigned long)index + 1, followups[index]], [NSFont systemFontOfSize:12], NSColor.secondaryLabelColor, 4);
     }
+    ApplyAgentMessageBubble(content, NSMakeRange(agentStart, content.length - agentStart), @"agent", NSTextAlignmentLeft);
     return content;
 }
 
 - (NSAttributedString *)agentFailureTranscriptForQuestion:(NSString *)question progress:(NSDictionary<NSString *, NSString *> *)progress activeStage:(NSString *)activeStage message:(NSString *)message {
     NSMutableAttributedString *content = [[self agentProgressTranscriptForQuestion:question progress:progress activeStage:activeStage] mutableCopy];
+    NSUInteger failureStart = content.length;
     AppendAgentText(content, @"\n任务失败\n", [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], NSColor.systemRedColor, 4);
     AppendAgentText(content, message, [NSFont systemFontOfSize:13], NSColor.systemRedColor, 0);
+    ApplyAgentMessageBubble(content, NSMakeRange(failureStart, content.length - failureStart), @"agent", NSTextAlignmentLeft);
     return content;
 }
 
@@ -1508,6 +1859,8 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     (void)sender;
     NSString *question = [self.agentInput.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!question.length || self.agentCommandRunning) { NSBeep(); return; }
+    self.agentInput.string = @"";
+    self.agentPlaceholderLabel.hidden = NO;
     if (self.lastAgentResult) self.priorAgentTranscript = [self.agentTranscript.textStorage copy];
     self.lastAgentQuestion = question;
     self.lastAgentResult = nil;
@@ -1568,8 +1921,6 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
             NSString *resultTitle = [object[@"result_title"] isKindOfClass:NSString.class] ? object[@"result_title"] : @"智能分析结果";
             NSArray *trace = [object[@"analysis_trace"] isKindOfClass:NSArray.class] ? object[@"analysis_trace"] : @[];
             [self setAgentTranscriptContent:[self agentCompletedTranscriptForQuestion:question trace:trace reply:reply summary:[self agentLeadSummary] resultTitle:resultTitle resultCount:self.visibleLeads.count]];
-            self.agentInput.string = @"";
-            self.agentPlaceholderLabel.hidden = NO;
             self.statusLabel.stringValue = [NSString stringWithFormat:@"完成 · %@", resultTitle];
             self.statusLabel.textColor = NSColor.systemGreenColor;
             [self.agentTranscript scrollRangeToVisible:NSMakeRange(self.agentTranscript.string.length, 0)];
@@ -1702,6 +2053,24 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
     return [[db stringByResolvingSymlinksInPath] stringByStandardizingPath];
 }
 
+- (NSArray<NSString *> *)runBackgroundAgentCommand:(NSArray<NSString *> *)arguments terminationStatus:(int *)status error:(NSError **)error {
+    NSTask *task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:self.pythonExecutable];
+    task.arguments = arguments;
+    task.environment = self.agentEnvironment;
+    NSPipe *pipe = [NSPipe pipe]; task.standardOutput = pipe; task.standardError = pipe;
+    if (![task launchAndReturnError:error]) {
+        if (status) *status = -1;
+        return @[];
+    }
+    NSData *data = [self drainPipe:pipe whileTaskRuns:task];
+    if (status) *status = task.terminationStatus;
+    NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSString *line in [output componentsSeparatedByString:@"\n"]) if (line.length) [lines addObject:line];
+    return lines;
+}
+
 - (NSArray<NSString *> *)runAgentCommand:(NSArray<NSString *> *)arguments terminationStatus:(int *)status error:(NSError **)error {
     return [self runAgentCommand:arguments stdinString:nil terminationStatus:status error:error];
 }
@@ -1801,14 +2170,20 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 - (NSString *)agentProgressText:(NSDictionary *)eventObject {
     NSString *stage = eventObject[@"stage"] ?: @"";
     NSDictionary *stats = [eventObject[@"stats"] isKindOfClass:NSDictionary.class] ? eventObject[@"stats"] : @{};
-    if ([stage isEqualToString:@"retrieval"]) return [NSString stringWithFormat:@"证据召回 · 扫描 %@ 个对话，召回 %@ 个候选（%@ 天）", stats[@"conversations"] ?: @0, stats[@"candidates"] ?: @0, stats[@"time_window_days"] ?: @0];
+    NSString *scope = [stats[@"scope"] isKindOfClass:NSString.class] ? stats[@"scope"] : @"private";
+    if ([stage isEqualToString:@"retrieval"]) {
+        if ([scope isEqualToString:@"group"]) return [NSString stringWithFormat:@"证据召回 · 锁定 %@ 个群聊，读取 %@ 条消息（%@）", stats[@"conversations"] ?: @0, stats[@"candidates"] ?: @0, stats[@"time_window_label"] ?: @""];
+        return [NSString stringWithFormat:@"证据召回 · 扫描 %@ 个对话，召回 %@ 个候选（%@）", stats[@"conversations"] ?: @0, stats[@"candidates"] ?: @0, stats[@"time_window_label"] ?: @""];
+    }
     if ([stage isEqualToString:@"analysis"]) {
         NSNumber *completed = stats[@"completed"];
-        return completed ? [NSString stringWithFormat:@"语义复核 · 已完成 %@/%@ 批，共 %@ 个候选", completed, stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0] : [NSString stringWithFormat:@"语义复核 · 准备 %@ 批，共 %@ 个候选", stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0];
+        NSString *unit = [scope isEqualToString:@"group"] ? @"条消息" : @"个候选";
+        return completed ? [NSString stringWithFormat:@"语义复核 · 已完成 %@/%@ 批，共 %@%@", completed, stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0, unit] : [NSString stringWithFormat:@"语义复核 · 准备 %@ 批，共 %@%@", stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0, unit];
     }
     if ([stage isEqualToString:@"audit"]) {
         NSNumber *completed = stats[@"completed"];
-        return completed ? [NSString stringWithFormat:@"覆盖审计 · 已完成 %@/%@ 批，独立复核 %@ 个候选", completed, stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0] : [NSString stringWithFormat:@"覆盖审计 · 准备 %@ 批，独立复核 %@ 个候选", stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0];
+        NSString *unit = [scope isEqualToString:@"group"] ? @"条消息" : @"个候选";
+        return completed ? [NSString stringWithFormat:@"覆盖审计 · 已完成 %@/%@ 批，独立复核 %@%@", completed, stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0, unit] : [NSString stringWithFormat:@"覆盖审计 · 准备 %@ 批，独立复核 %@%@", stats[@"batches"] ?: @0, stats[@"candidates"] ?: @0, unit];
     }
     return eventObject[@"message"] ?: @"分析中";
 }
@@ -2102,6 +2477,11 @@ static NSView *DashboardTypeBar(NSRect frame, NSArray *rows) {
 - (void)applicationWillTerminate:(NSNotification *)notification {
     if (self.activeAgentTask.running) [self.activeAgentTask terminate];
     self.activeAgentTask = nil;
+    if (self.localAPIServiceTask.running) {
+        [self.localAPIServiceTask terminate];
+        [self.localAPIServiceTask waitUntilExit];
+    }
+    self.localAPIServiceTask = nil;
     [self stopChatlogService];
 }
 

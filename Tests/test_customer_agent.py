@@ -7,11 +7,129 @@ from unittest import mock
 from unittest.mock import patch
 
 from agent_core.analysis_store import AnalysisStore
-from agent_core.corpus_store import CorpusStore
-from agent_core.customer_agent import DEFAULT_TIME_WINDOW_DAYS, _active_account, _conversation_stats, _lead_from_match, _name_matches, _plan_query, _question_time_window_days, _rank_conversations, _validated_final_evidence, CustomerAgentError, ask_customer_agent, refresh_saved_analysis
+from agent_core.corpus_store import CorpusStore, evidence_id
+from agent_core.customer_agent import (
+    DEFAULT_TIME_WINDOW_DAYS,
+    CustomerAgentError,
+    _active_account,
+    _conversation_stats,
+    _group_message_chunks,
+    _lead_from_match,
+    _name_matches,
+    _plan_query,
+    _question_group_names,
+    _question_time_window_days,
+    _rank_conversations,
+    _time_window_display,
+    _validated_final_evidence,
+    ask_customer_agent,
+    refresh_saved_analysis,
+)
 
 
 class CustomerAgentTests(unittest.TestCase):
+    @patch("agent_core.customer_agent.ChatlogClient")
+    @patch("agent_core.customer_agent.DeepSeekClient")
+    @patch("agent_core.customer_agent.AnalysisStore")
+    @patch("agent_core.customer_agent.KeychainStore")
+    def test_named_group_topic_analysis_reads_only_the_target_group_messages(
+        self, keychain, store_class, deepseek_class, chatlog_class
+    ):
+        class Cursor:
+            def __init__(self, one=None, rows=None):
+                self.one = one
+                self.rows = rows or []
+
+            def fetchone(self):
+                return self.one
+
+            def __iter__(self):
+                return iter(self.rows)
+
+        class Connection:
+            private_query_seen = False
+
+            def execute(self, sql, _params=()):
+                if "active_account" in sql:
+                    return Cursor(one={"value": "account"})
+                if "min(e.timestamp)" in sql:
+                    return Cursor(one={"first_ts": 100, "last_ts": 200, "evidence_count": 2})
+                if "FROM sessions" in sql:
+                    raise AssertionError("群聊分析不得使用已发布世代中的过期会话列表")
+                if "SELECT username,display_name" in sql:
+                    self.private_query_seen = True
+                return Cursor(rows=[])
+
+        messages = [
+            {"local_id": 1, "timestamp": 100, "sender": "甲", "type": "text", "content": "大家在讨论 AI Agent 产品", "is_self": False},
+            {"local_id": 2, "timestamp": 200, "sender": "乙", "type": "text", "content": "重点是智能体落地和工作流", "is_self": False},
+        ]
+        evidence_ids = [
+            evidence_id("account", "generation", "group@chatroom", item)
+            for item in messages
+        ]
+        plan = {
+            "task_type": "topic_analysis",
+            "summary": "分析目标群热门话题",
+            "subject_names": [],
+            "requested_dimensions": ["热门话题", "讨论重点"],
+            "output_title": "破壳群热门话题",
+            "conversation_scope": "group",
+            "target_conversations": ["AI+🌞破壳HATCH"],
+            "time_window_days": DEFAULT_TIME_WINDOW_DAYS,
+            "topic_groups": [{"concept": "群聊话题", "terms": ["热门话题"]}],
+            "export_requested": False,
+        }
+        responses = [
+            {"choices": [{"message": {"content": json.dumps(plan, ensure_ascii=False)}}]},
+            {"choices": [{"message": {"content": json.dumps({"topics": [{"title": "AI Agent 落地", "summary": "讨论智能体产品与工作流", "confidence": 92, "evidence_ids": evidence_ids}]}, ensure_ascii=False)}}]},
+            {"choices": [{"message": {"content": json.dumps({"topics": [{"title": "智能体工作流", "summary": "独立复核确认落地话题", "confidence": 90, "evidence_ids": evidence_ids}]}, ensure_ascii=False)}}]},
+            {"choices": [{"message": {"content": json.dumps({"title": "破壳群热门话题", "answer": "最热门的是 AI Agent 落地与工作流。", "sections": [{"title": "AI Agent 落地", "content": "群成员集中讨论智能体产品和工作流。", "confidence": 91, "evidence_ids": evidence_ids, "counter_evidence_ids": []}], "limitations": ["仅基于目标群文本消息。"], "suggested_followups": ["谁参与这个话题最多？", "话题随时间如何变化？"]}, ensure_ascii=False)}}]},
+        ]
+
+        keychain.return_value.get.return_value = "key"
+        store = store_class.return_value
+        store.conn = Connection()
+        store.agent_model.return_value = "deepseek-v4-flash"
+        store.ensure_agent_session.return_value = "session"
+        store.agent_context.return_value = []
+        store.published_corpus.return_value = {
+            "corpus_id": "corpus",
+            "generation_id": "generation",
+            "since_ts": 0,
+            "until_ts": 300,
+        }
+        deepseek_class.return_value.complete_json.side_effect = responses
+        chatlog_class.return_value.databases.return_value = {
+            "MSG": ["/tmp/xwechat_files/account/db_storage/message/message_0.db"]
+        }
+        chatlog_class.return_value.all_sessions.return_value = [
+            {"username": "group@chatroom", "chat": "AI+🌞破壳HATCH", "timestamp": 390},
+            {"username": "other@chatroom", "chat": "其他群", "timestamp": 380},
+        ]
+        chatlog_class.return_value.history.return_value = messages
+        progress = []
+
+        with patch("agent_core.customer_agent.time.time", return_value=400):
+            result = ask_customer_agent(
+                "state.db",
+                '帮我分析群聊：“AI+🌞破壳HATCH”里讨论最热门的话题',
+                progress=progress.append,
+            )
+
+        self.assertEqual(result["target_conversations"], ["AI+🌞破壳HATCH"])
+        self.assertEqual(result["leads"][0]["customer_id"], "group@chatroom")
+        self.assertEqual(result["leads"][0]["conversation_stats"]["message_count"], 2)
+        self.assertEqual(len(result["leads"][0]["evidence"]), 2)
+        self.assertFalse(store.conn.private_query_seen)
+        chatlog_class.return_value.all_sessions.assert_called_once_with()
+        chatlog_class.return_value.history.assert_called_once_with("group@chatroom", 0, 400)
+        retrieval = next(item for item in progress if item["stage"] == "retrieval")
+        self.assertEqual(retrieval["stats"]["conversations"], 1)
+        self.assertEqual(retrieval["stats"]["candidates"], 2)
+        self.assertEqual(retrieval["stats"]["time_window_label"], "全部历史")
+        self.assertNotIn("36500", "\n".join(result["analysis_trace"]))
+
     @patch("agent_core.customer_agent.KeychainStore")
     @patch("agent_core.customer_agent.AnalysisStore")
     def test_unchanged_saved_analysis_refresh_is_local_and_uses_no_api_key(self, store_class, keychain):
@@ -82,7 +200,8 @@ class CustomerAgentTests(unittest.TestCase):
         self.assertTrue(result["export_requested"])
         self.assertEqual(client.return_value.complete_json.call_count, 4)
         self.assertEqual(client.return_value.complete_json.call_args_list[0].args[0], "deepseek-v4-flash")
-        self.assertIn("理解任务 · 请求 36500 天 · 数据覆盖", result["analysis_trace"][0])
+        self.assertIn("理解任务 · 全部历史 · 数据覆盖", result["analysis_trace"][0])
+        self.assertNotIn("36500", result["analysis_trace"][0])
         self.assertEqual(result["leads"][0]["evidence"][0]["evidence_id"], "e1")
         self.assertEqual(result["schema_version"], "agent.query.v2")
         self.assertEqual(result["result_title"], "创业客户分析")
@@ -129,6 +248,30 @@ class CustomerAgentTests(unittest.TestCase):
         self.assertEqual(_question_time_window_days("找出近半年和我讨论创业的人"), 183)
         self.assertEqual(_question_time_window_days("过去3个月聊过合作的人"), 93)
 
+    def test_explicit_group_name_is_a_deterministic_query_scope(self):
+        self.assertEqual(
+            _question_group_names('帮我分析群聊：“AI+🌞破壳HATCH”里讨论最热门的话题'),
+            ["AI+🌞破壳HATCH"],
+        )
+        self.assertEqual(_question_group_names("分析群「产品共创营」最近的待办"), ["产品共创营"])
+        self.assertEqual(_question_group_names("找最近聊过合作的朋友"), [])
+
+    def test_group_message_chunking_preserves_every_message_without_a_candidate_cap(self):
+        rows = [
+            {"evidence_id": "e%s" % index, "content": "群聊消息%s" % index}
+            for index in range(523)
+        ]
+        chunks = _group_message_chunks(rows)
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual(
+            [item["evidence_id"] for chunk in chunks for item in chunk],
+            [item["evidence_id"] for item in rows],
+        )
+
+    def test_full_history_sentinel_is_never_user_visible(self):
+        self.assertEqual(_time_window_display(DEFAULT_TIME_WINDOW_DAYS, True), "全部历史")
+        self.assertEqual(_time_window_display(183, False), "183 天")
+
     def test_unspecified_time_always_uses_full_history_not_model_guess(self):
         payload = {
             "task_type": "person_profile",
@@ -145,6 +288,7 @@ class CustomerAgentTests(unittest.TestCase):
         client.complete_json.return_value = response
         plan = _plan_query(client, "deepseek-v4-flash", "甲是什么样的人", [])
         self.assertEqual(plan["time_window_days"], DEFAULT_TIME_WINDOW_DAYS)
+        self.assertTrue(plan["full_history"])
 
     def test_single_character_contact_names_require_an_exact_display_name(self):
         self.assertTrue(_name_matches("凯", ["凯"]))

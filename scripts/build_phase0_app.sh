@@ -50,11 +50,13 @@ mkdir -p \
   "$RESOURCES_DIR/PythonRuntime/bin" \
   "$RESOURCES_DIR/PythonRuntime/lib/python3.9/site-packages" \
   "$RESOURCES_DIR/Node" \
-  "$RESOURCES_DIR/Export/node_modules/@oai"
+  "$RESOURCES_DIR/Export/node_modules/@oai" \
+  "$RESOURCES_DIR/Integrations"
 
 cp app/Phase0App/Info.plist "$APP_DIR/Contents/Info.plist"
 /usr/bin/ditto --noqtn app/Phase0App/WeChatCustomerAnalysis.icns "$RESOURCES_DIR/WeChatCustomerAnalysis.icns"
 /usr/bin/ditto --noqtn agent_core "$RESOURCES_DIR/Python/agent_core"
+/usr/bin/ditto --noqtn integrations/workbuddy "$RESOURCES_DIR/Integrations/WorkBuddy"
 find "$RESOURCES_DIR/Python" -type d -name __pycache__ -prune -exec rm -rf {} +
 
 cp "$CHATLOG_BINARY" "$RESOURCES_DIR/Chatlog/chatlog-darwin-arm64"

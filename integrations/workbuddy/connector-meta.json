@@ -1,0 +1,22 @@
+{
+  "name": "微信客户分析",
+  "name_zh": "微信客户分析",
+  "name_en": "WeChat Customer Analysis",
+  "description": "检索本机微信会话与消息，查看业务仪表盘，并执行可追溯的客户分析。",
+  "description_zh": "检索本机微信会话与消息，查看业务仪表盘，并执行可追溯的客户分析。",
+  "description_en": "Search local WeChat conversations, inspect the dashboard, and run evidence-based customer analysis.",
+  "source": "wechat-customer-analysis",
+  "type": "mcp",
+  "version": "1.0.2",
+  "minWorkbuddyVersion": "4.24.0",
+  "examples_zh": [
+    "查找近半年提到创业或做项目的联系人",
+    "列出最近和我讨论报价的微信消息",
+    "分析这个群聊近期最热门的话题"
+  ],
+  "examples_en": [
+    "Find contacts who discussed starting a business in the last six months",
+    "List recent WeChat messages about pricing",
+    "Analyze the most active topics in this group conversation"
+  ]
+}

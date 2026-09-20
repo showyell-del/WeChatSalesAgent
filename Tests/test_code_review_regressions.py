@@ -111,6 +111,66 @@ class CodeReviewRegressionTests(unittest.TestCase):
         self.assertIn("[self askCustomerAgent:textView]", handler)
         self.assertIn("return YES", handler)
 
+    def test_native_edit_menu_routes_standard_copy_and_paste_shortcuts(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        self.assertIn("static void InstallMainMenu(void)", source)
+        self.assertIn("action:@selector(copy:)", source)
+        self.assertIn('keyEquivalent:@"c"', source)
+        self.assertIn("action:@selector(paste:)", source)
+        self.assertIn('keyEquivalent:@"v"', source)
+        launch = source.split(
+            "- (void)applicationDidFinishLaunching:(NSNotification *)notification", 1
+        )[1].split("- (NSString *)storedAgentModel", 1)[0]
+        self.assertIn("InstallMainMenu();", launch)
+
+    def test_agent_input_clears_before_background_analysis_starts(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        handler = source.split("- (void)askCustomerAgent:", 1)[1].split(
+            "- (void)newAgentAnalysis:", 1
+        )[0]
+        clear_index = handler.index('self.agentInput.string = @"";')
+        dispatch_index = handler.index("dispatch_async(dispatch_get_global_queue")
+        self.assertLess(clear_index, dispatch_index)
+        success = handler.split("if (status != 0", 1)[1]
+        self.assertNotIn('self.agentInput.string = @"";', success)
+
+    def test_full_history_progress_uses_semantic_label_not_day_sentinel(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        progress = source.split("- (NSString *)agentProgressText:", 1)[1].split(
+            "- (NSDictionary *)lastJSONObjectFromLines:", 1
+        )[0]
+        self.assertIn('stats[@"time_window_label"]', progress)
+        self.assertNotIn('stats[@"time_window_days"]', progress)
+
+    def test_agent_transcript_places_user_above_right_aligned_agent_block(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        self.assertIn("@interface AgentTranscriptView : NSTextView", source)
+        self.assertIn("@interface AgentTranscriptScrollView : NSScrollView", source)
+        self.assertIn("frame.size.width = width", source)
+        self.assertIn("bezierPathWithRoundedRect", source)
+        self.assertIn("ApplyAgentMessageBubble", source)
+        self.assertIn('[target addAttribute:AgentBubbleAttributeName value:kind range:range]', source)
+        self.assertIn("self.agentTranscript.autoresizingMask = NSViewWidthSizable", source)
+        self.assertIn("self.agentTranscript.horizontallyResizable = NO", source)
+        for start, end in (
+            (
+                "- (NSAttributedString *)agentProgressTranscriptForQuestion:",
+                "- (NSAttributedString *)agentCompletedTranscriptForQuestion:",
+            ),
+            (
+                "- (NSAttributedString *)agentCompletedTranscriptForQuestion:",
+                "- (NSAttributedString *)agentFailureTranscriptForQuestion:",
+            ),
+        ):
+            transcript = source.split(start, 1)[1].split(end, 1)[0]
+            question = transcript.index("AppendAgentTextAligned(content")
+            agent = transcript.index('AppendAgentText(content, @"✦  Agent\\n"')
+            self.assertLess(question, agent)
+            self.assertIn("NSTextAlignmentRight", transcript[question:agent])
+            self.assertIn('@"user"', transcript[question:agent])
+            self.assertIn('@"agent"', transcript[agent:])
+            self.assertNotIn('@"你\\n"', transcript)
+
     def test_workspace_rebuild_keeps_a_window_alive(self):
         source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
         rebuild = source.split("- (void)rebuildWorkspaceWithMessage:", 1)[1].split(
@@ -446,6 +506,54 @@ class CodeReviewRegressionTests(unittest.TestCase):
         validator = (ROOT / "scripts/phase4_validate.sh").read_text(encoding="utf-8")
         self.assertIn("missing.sqlite3", validator)
         self.assertNotIn("wxid_3prysbeqgvci22_9f8d", validator)
+
+    def test_native_pages_are_reused_and_refresh_without_clearing_visible_data(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        self.assertIn("@property NSView *customerRootView;", source)
+        self.assertIn("@property NSView *dashboardRootView;", source)
+        self.assertIn("@property NSView *messageSearchRootView;", source)
+        dashboard = source.split("- (void)showAnalyticsDashboardView", 1)[1].split(
+            "- (void)openAnalyticsDashboard", 1
+        )[0]
+        search = source.split("- (void)showMessageSearchView", 1)[1].split(
+            "- (void)runMessageSearch", 1
+        )[0]
+        customer = source.split("- (void)showCustomerWorkspace", 1)[1].split(
+            "- (void)renderDashboardGroupCards", 1
+        )[0]
+        self.assertIn("if (self.dashboardRootView)", dashboard)
+        self.assertIn("if (self.messageSearchRootView)", search)
+        self.assertNotIn("self.messageSearchResults = @[]", search)
+        self.assertIn("self.window.contentView = self.customerRootView", customer)
+        self.assertNotIn("rebuildWorkspaceWithMessage", customer)
+        self.assertIn("dispatch_get_global_queue", source.split("- (void)loadAnalyticsDashboard", 1)[1].split("- (void)generateDashboardSummary", 1)[0])
+        self.assertIn("dispatch_get_global_queue", source.split("- (void)loadMessageSearchSessions", 1)[1].split("- (void)showMessageSearchView", 1)[0])
+        self.assertEqual(source.count("runBackgroundAgentCommand:"), 4)
+        self.assertNotIn(
+            "runAgentCommand:@[@\"-m\", @\"agent_core.message_search_cli\"",
+            source,
+        )
+        self.assertIn("navigationRevision == self.navigationRevision", source)
+        self.assertIn("ownedService == self.chatlogServiceTask", source)
+        self.assertEqual(source.count("NSTextAlignmentRight);\n    ApplyAgentMessageBubble"), 2)
+        self.assertEqual(source.count(", 34, NSTextAlignmentRight);"), 2)
+
+    def test_app_exposes_authenticated_loopback_api_and_stops_it_on_exit(self):
+        source = (ROOT / "app/Phase0App/main.m").read_text(encoding="utf-8")
+        self.assertIn('buttonWithTitle:@"Agent 接入"', source)
+        self.assertIn('@"--host", @"127.0.0.1", @"--port", @"8765"', source)
+        self.assertIn('@"-m", @"agent_core.local_api", @"token"', source)
+        self.assertIn("[self startIntegrationServices]", source)
+        self.assertIn("- (BOOL)prepareOwnedLocalAPIPort", source)
+        self.assertIn('@"-m agent_core.local_api serve"', source)
+        self.assertIn('[command containsString:self.currentDBPath]', source)
+        self.assertIn('NSLocalizedDescriptionKey: @"8765 端口被其他程序占用"', source)
+        self.assertIn("if (self.localAPIServiceTask.running)", source)
+        self.assertTrue((ROOT / "agent_core/local_api_openapi.json").is_file())
+        self.assertTrue((ROOT / "agent_core/local_mcp.py").is_file())
+        self.assertTrue((ROOT / "docs/LOCAL_API.md").is_file())
+        self.assertTrue((ROOT / "docs/LOCAL_MCP.md").is_file())
+        self.assertIn('integrations/workbuddy "$RESOURCES_DIR/Integrations/WorkBuddy"', (ROOT / "scripts/build_phase0_app.sh").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

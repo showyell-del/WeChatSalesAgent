@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">WeChat Customer Analysis</title>
+  <desc id="desc">Two chat bubbles with an analysis signal</desc>
+  <defs>
+    <linearGradient id="background" x1="72" y1="56" x2="440" y2="456" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2F7CF6"/>
+      <stop offset="1" stop-color="#1856D5"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#background)"/>
+  <path d="M104 132c0-28.7 23.3-52 52-52h200c28.7 0 52 23.3 52 52v104c0 28.7-23.3 52-52 52H238l-66 52v-52h-16c-28.7 0-52-23.3-52-52V132Z" fill="#FFFFFF"/>
+  <path d="M180 326h176c28.7 0 52 23.3 52 52v2c0 28.7-23.3 52-52 52H214l-54 36v-36h-4c-28.7 0-52-23.3-52-52v-2c0-28.7 23.3-52 52-52h24Z" fill="#DCEAFF"/>
+  <path d="M168 211l36-38 34 23 48-60 58 38" fill="none" stroke="#2F7CF6" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="168" cy="211" r="12" fill="#2F7CF6"/>
+  <circle cx="204" cy="173" r="12" fill="#2F7CF6"/>
+  <circle cx="238" cy="196" r="12" fill="#2F7CF6"/>
+  <circle cx="286" cy="136" r="12" fill="#2F7CF6"/>
+  <circle cx="344" cy="174" r="12" fill="#2F7CF6"/>
+</svg>

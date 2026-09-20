@@ -1,0 +1,181 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "WeChat Customer Analysis Local API",
+    "version": "1.0.0",
+    "description": "Loopback-only API for reading the active WeChat account data and running customer analyses."
+  },
+  "servers": [{"url": "http://127.0.0.1:8765"}],
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "summary": "Process health",
+        "responses": {"200": {"description": "API process is running", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Health"}}}}}
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "OpenAPI contract",
+        "responses": {"200": {"description": "This OpenAPI document"}}
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "summary": "Active account and Chatlog readiness",
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "200": {"description": "Ready", "content": {"application/json": {"schema": {"type": "object", "required": ["status", "active_account", "chatlog"], "properties": {"status": {"const": "ready"}, "active_account": {"type": "string"}, "chatlog": {"type": "object"}}}}}},
+          "401": {"$ref": "#/components/responses/Problem"},
+          "409": {"$ref": "#/components/responses/Problem"},
+          "503": {"$ref": "#/components/responses/Problem"}
+        }
+      }
+    },
+    "/v1/dashboard": {
+      "get": {
+        "summary": "Current dashboard data",
+        "security": [{"bearerAuth": []}],
+        "parameters": [
+          {"name": "time_range", "in": "query", "schema": {"type": "string", "enum": ["today", "last-1d", "last-30d", "all"], "default": "today"}},
+          {"name": "private_chat", "in": "query", "schema": {"type": "string"}},
+          {"name": "group_chat", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "Dashboard payload", "content": {"application/json": {"schema": {"type": "object"}}}},
+          "401": {"$ref": "#/components/responses/Problem"},
+          "409": {"$ref": "#/components/responses/Problem"},
+          "503": {"$ref": "#/components/responses/Problem"}
+        }
+      }
+    },
+    "/v1/conversations": {
+      "get": {
+        "summary": "Cursor-paginated conversations",
+        "security": [{"bearerAuth": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Cursor"}
+        ],
+        "responses": {
+          "200": {"description": "Conversation page", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Page"}}}},
+          "400": {"$ref": "#/components/responses/Problem"},
+          "401": {"$ref": "#/components/responses/Problem"},
+          "409": {"$ref": "#/components/responses/Problem"}
+        }
+      }
+    },
+    "/v1/messages": {
+      "get": {
+        "summary": "Cursor-paginated message search",
+        "security": [{"bearerAuth": []}],
+        "parameters": [
+          {"name": "chat", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1}},
+          {"name": "since", "in": "query", "schema": {"type": "integer", "minimum": 1, "default": 1}},
+          {"name": "until", "in": "query", "schema": {"type": "integer", "minimum": 2}, "description": "Defaults to current Unix time plus one second."},
+          {"name": "keyword", "in": "query", "schema": {"type": "string"}},
+          {"name": "msg_type", "in": "query", "schema": {"type": "string"}},
+          {"name": "sub_type", "in": "query", "schema": {"type": "string"}},
+          {"name": "direction", "in": "query", "schema": {"type": "string", "enum": ["all", "self", "other"], "default": "all"}},
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Cursor"}
+        ],
+        "responses": {
+          "200": {"description": "Message page", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Page"}}}},
+          "400": {"$ref": "#/components/responses/Problem"},
+          "401": {"$ref": "#/components/responses/Problem"},
+          "409": {"$ref": "#/components/responses/Problem"}
+        }
+      }
+    },
+    "/v1/analyses": {
+      "post": {
+        "summary": "Queue a customer analysis",
+        "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "Idempotency-Key", "in": "header", "required": true, "schema": {"type": "string", "maxLength": 200}}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["question"],
+                "properties": {
+                  "question": {"type": "string", "minLength": 1},
+                  "session_id": {"type": "string"},
+                  "task_type": {"type": "string"},
+                  "timeout": {"type": "integer", "minimum": 10, "maximum": 600, "default": 120}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {"description": "Queued operation", "headers": {"Location": {"schema": {"type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Operation"}}}},
+          "400": {"$ref": "#/components/responses/Problem"},
+          "401": {"$ref": "#/components/responses/Problem"},
+          "409": {"$ref": "#/components/responses/Problem"},
+          "413": {"$ref": "#/components/responses/Problem"},
+          "422": {"$ref": "#/components/responses/Problem"}
+        }
+      }
+    },
+    "/v1/operations/{id}": {
+      "get": {
+        "summary": "Poll an analysis operation",
+        "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Operation state", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Operation"}}}},
+          "401": {"$ref": "#/components/responses/Problem"},
+          "404": {"$ref": "#/components/responses/Problem"},
+          "409": {"$ref": "#/components/responses/Problem"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {"type": "http", "scheme": "bearer"}
+    },
+    "parameters": {
+      "Limit": {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
+      "Cursor": {"name": "cursor", "in": "query", "schema": {"type": "string"}}
+    },
+    "responses": {
+      "Problem": {"description": "RFC 7807 problem", "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Problem"}}}}
+    },
+    "schemas": {
+      "Health": {"type": "object", "required": ["status", "service"], "properties": {"status": {"const": "ok"}, "service": {"type": "string"}}},
+      "Pagination": {"type": "object", "required": ["limit", "next_cursor", "has_next"], "properties": {"limit": {"type": "integer"}, "next_cursor": {"type": ["string", "null"]}, "has_next": {"type": "boolean"}}},
+      "Page": {"type": "object", "required": ["data", "pagination"], "properties": {"data": {"type": "array", "items": {"type": "object"}}, "pagination": {"$ref": "#/components/schemas/Pagination"}}},
+      "Operation": {
+        "type": "object",
+        "required": ["id", "status", "account_id", "created_at", "updated_at"],
+        "properties": {
+          "id": {"type": "string"},
+          "status": {"type": "string", "enum": ["queued", "running", "succeeded", "failed"]},
+          "account_id": {"type": "string"},
+          "created_at": {"type": "integer"},
+          "updated_at": {"type": "integer"},
+          "started_at": {"type": "integer"},
+          "completed_at": {"type": "integer"},
+          "result": {"type": "object"},
+          "error": {"type": "object"}
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "required": ["type", "title", "status", "detail", "instance", "code"],
+        "properties": {
+          "type": {"type": "string", "format": "uri"},
+          "title": {"type": "string"},
+          "status": {"type": "integer"},
+          "detail": {"type": "string"},
+          "instance": {"type": "string"},
+          "code": {"type": "string"}
+        }
+      }
+    }
+  }
+}

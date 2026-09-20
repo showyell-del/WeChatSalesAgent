@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "wechat-customer-analysis": {
+      "type": "stdio",
+      "command": "/Applications/WeChatSalesAgent.app/Contents/Resources/PythonRuntime/bin/python3",
+      "args": [
+        "-m",
+        "agent_core.local_mcp"
+      ],
+      "env": {
+        "PYTHONHOME": "/Applications/WeChatSalesAgent.app/Contents/Resources/PythonRuntime",
+        "PYTHONPATH": "/Applications/WeChatSalesAgent.app/Contents/Resources/Python"
+      },
+      "timeout": 30000
+    }
+  }
+}
